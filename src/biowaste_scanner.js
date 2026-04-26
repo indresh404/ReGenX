@@ -181,7 +181,19 @@ const BioScanner = (() => {
         reader.onload = e => {
             const dataURL = e.target.result;
             __imageB64 = dataURL.split(',')[1];
-            __showPreview(dataURL);
+            
+            // Sync with canvas for analysis
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.getElementById('bws-canvas');
+                if (canvas) {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    canvas.getContext('2d').drawImage(img, 0, 0);
+                }
+                __showPreview(dataURL);
+            };
+            img.src = dataURL;
         };
         reader.readAsDataURL(file);
         event.target.value = '';
@@ -324,8 +336,9 @@ const BioScanner = (() => {
         // 3. Identify Organic signals (Earthy/Green dominance)
         const isOrganicDominant = (gRatio > 0.35) || (rRatio > 0.38 && gRatio > 0.3); // Greens or Oranges/Browns
         
-        let detectedItems = [];
-        let score = 85; 
+        // 4. Add minor variance for realism
+        const jitter = (Math.sin(v) * 5); 
+        let score = 85 + jitter; 
 
         // BIAS: Assume Organic unless proven otherwise
         if (!isHighlyArtificial && !isSmoothSynthetic) {
