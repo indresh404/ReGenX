@@ -559,6 +559,13 @@ tr:hover td { background: var(--bg); }
 .card-body .summary { font-size: 13px; line-height: 1.5; font-style: italic; color: var(--text-muted); margin-bottom: 16px; }
 .stat-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; font-weight: 600; }
 
+.spectral-data-hud { 
+  display: flex; flex-direction: column; gap: 4px; margin-top: 16px; 
+  background: rgba(0,0,0,0.4); padding: 12px; border-radius: 12px;
+  font-family: var(--mono); font-size: 11px; text-align: left;
+}
+.spectral-data-hud div { color: var(--green); border-bottom: 1px solid rgba(13, 148, 136, 0.2); padding: 2px 0; }
+
 @media (max-width: 400px) {
   .scanner-back-btn { padding: 6px 10px; font-size: 12px; }
   .scanner-banner { display: none; }
