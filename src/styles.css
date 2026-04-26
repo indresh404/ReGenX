@@ -405,10 +405,25 @@ tr:hover td { background: var(--bg); }
   
   .two-col { grid-template-columns: 1fr; }
   .modal-box { width: 95%; }
+  
+  /* Compact stats on mobile */
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .stat-card { padding: 12px; }
+  .stat-val { font-size: 20px; }
+  
+  /* Quick Actions row */
+  .mobile-quick-actions {
+    display: flex !important;
+    gap: 12px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
 }
 
 .hamburger { display: none; }
 .sidebar-overlay { display: none; }
+.mobile-quick-actions { display: none; }
 
 /* TOAST NOTIFICATION */
 #toast {

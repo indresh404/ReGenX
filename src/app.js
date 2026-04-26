@@ -547,6 +547,19 @@ async function renderProvider(mc, fullRender) {
   
   if (currentView === 'v-pv-dash') {
     if(fullRender) mc.innerHTML = `
+      <!-- Mobile Quick Access -->
+      <div class="mobile-quick-actions">
+        <button class="glass-card" style="flex:1; padding:12px; text-align:center; border-color:var(--green);" onclick="showView('v-pv-req')">
+          <div style="font-size:20px;">🚀</div><div style="font-size:11px; font-weight:600; margin-top:4px;">Dispatch</div>
+        </button>
+        <button class="glass-card" style="flex:1; padding:12px; text-align:center; border-color:var(--blue);" onclick="openScanner()">
+          <div style="font-size:20px;">📸</div><div style="font-size:11px; font-weight:600; margin-top:4px;">AI Scan</div>
+        </button>
+        <button class="glass-card" style="flex:1; padding:12px; text-align:center; border-color:var(--amber);" onclick="showView('v-market')">
+          <div style="font-size:20px;">🛒</div><div style="font-size:11px; font-weight:600; margin-top:4px;">Exchange</div>
+        </button>
+      </div>
+
       <div class="stats-grid" id="pv-stats"></div>
       <div class="two-col">
         <div>
