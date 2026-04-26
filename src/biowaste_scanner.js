@@ -328,72 +328,99 @@ const BioScanner = (() => {
         }
 
         const predictions = await __tfModel.classify(canvas);
-        console.log('[BioScanner] AI Predictions:', predictions);
-
-        // Map AI predictions to our Waste Categories
-        const organicKeywords = ['fruit', 'banana', 'orange', 'apple', 'veg', 'leaf', 'plant', 'food', 'bread', 'meat', 'egg', 'produce'];
         
-        // EXPANDED: Electronic & Industrial Waste Keywords
-        const inorganicKeywords = [
-            'plastic', 'bottle', 'cup', 'wrapper', 'can', 'metal', 'glass', 'paper', 'cardboard', 'bag', 
-            'phone', 'mouse', 'keyboard', 'cable', 'wire', 'circuit', 'board', 'component', 'hardware', 
-            'electronic', 'modem', 'switch', 'router', 'battery', 'tool', 'machine', 'gear', 'tv', 'monitor'
-        ];
+        // ── WASTE DOMAIN INTERPRETER (Professional Lexicon) ──────────────────
+        const WASTE_MAP = {
+            'fruit': { name: 'Biogenic Bio-Mass', type: 'Organic', cn: '20:1', moist: '85%', emoji: '🍎' },
+            'banana': { name: 'High-Sugar Bio-Mass', type: 'Organic', cn: '30:1', moist: '75%', emoji: '🍌' },
+            'orange': { name: 'Citric Bio-Mass', type: 'Organic', cn: '25:1', moist: '80%', emoji: '🍊' },
+            'apple': { name: 'Biogenic Fiber', type: 'Organic', cn: '35:1', moist: '82%', emoji: '🍎' },
+            'veg': { name: 'Leafy Bio-Mass', type: 'Organic', cn: '15:1', moist: '90%', emoji: '🍃' },
+            'leaf': { name: 'Green Bio-Mass', type: 'Organic', cn: '20:1', moist: '70%', emoji: '🌿' },
+            'food': { name: 'Mixed Food Scraps', type: 'Organic', cn: '18:1', moist: '75%', emoji: '🍲' },
+            'bread': { name: 'High-Starch Organic', type: 'Organic', cn: '30:1', moist: '35%', emoji: '🍞' },
+            'meat': { name: 'Proteinaceous Waste', type: 'Organic', cn: '5:1', moist: '70%', emoji: '🥩' },
+            'plastic': { name: 'Polymer Inhibitor', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🥤' },
+            'bottle': { name: 'HDPE/PET Contaminant', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🧴' },
+            'cup': { name: 'Single-Use Polymer', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🥤' },
+            'wrapper': { name: 'Laminated Film', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '📦' },
+            'can': { name: 'Metallic Contaminant', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🥫' },
+            'paper': { name: 'Cellulosic Waste', type: 'Carbon-Source', cn: '100:1', moist: '10%', emoji: '📄' },
+            'cardboard': { name: 'High-Carbon Bulking Agent', type: 'Carbon-Source', cn: '350:1', moist: '12%', emoji: '📦' },
+            'circuit': { name: 'Hazardous E-Waste', type: 'Toxic', cn: 'N/A', moist: '0%', emoji: '☢️' },
+            'board': { name: 'Hazardous PCB', type: 'Toxic', cn: 'N/A', moist: '0%', emoji: '☢️' },
+            'battery': { name: 'Toxic Chemical Cell', type: 'Toxic', cn: 'N/A', moist: '0%', emoji: '🔋' }
+        };
 
         let detectedItems = [];
         let organicConfidence = 0;
         let inorganicConfidence = 0;
-        let isEWaste = false;
+        let toxicConfidence = 0;
+        let carbonConfidence = 0;
 
         predictions.forEach(p => {
-            const name = p.className.toLowerCase();
-            const isOrg = organicKeywords.some(k => name.includes(k));
-            const isInorg = inorganicKeywords.some(k => name.includes(k));
+            const label = p.className.toLowerCase();
+            let found = false;
             
-            // Check for E-Waste specifically
-            if (['circuit', 'board', 'electronic', 'component'].some(k => name.includes(k))) isEWaste = true;
-
-            if (isOrg) {
-                detectedItems.push({ name: p.className.split(',')[0], category: 'Organic', isContaminant: false, emoji: '🍃' });
-                organicConfidence += p.probability;
-            } else if (isInorg) {
-                const isToxic = ['circuit', 'battery', 'hardware'].some(k => name.includes(k));
-                detectedItems.push({ 
-                    name: p.className.split(',')[0], 
-                    category: isToxic ? 'Hazardous' : 'Inorganic', 
-                    isContaminant: true, 
-                    emoji: isToxic ? '☢️' : '📦' 
+            for (let key in WASTE_MAP) {
+                if (label.includes(key)) {
+                    const data = WASTE_MAP[key];
+                    detectedItems.push({
+                        name: data.name,
+                        category: data.type,
+                        isContaminant: data.type !== 'Organic' && data.type !== 'Carbon-Source',
+                        emoji: data.emoji,
+                        details: `C:N ${data.cn} | Moist: ${data.moist}`
+                    });
+                    
+                    if (data.type === 'Organic') organicConfidence += p.probability;
+                    if (data.type === 'Inorganic') inorganicConfidence += p.probability;
+                    if (data.type === 'Toxic') toxicConfidence += p.probability;
+                    if (data.type === 'Carbon-Source') carbonConfidence += p.probability;
+                    
+                    found = true;
+                    break;
+                }
+            }
+            
+            if (!found && p.probability > 0.15) {
+                // Fallback for unknown items
+                const isLikelyOrganic = (label.includes('dog') || label.includes('cat') || label.includes('bird')); // MobileNet quirk
+                detectedItems.push({
+                    name: p.className.split(',')[0],
+                    category: isLikelyOrganic ? 'Potential Bio-Mass' : 'Unidentified Material',
+                    isContaminant: !isLikelyOrganic,
+                    emoji: '❓',
+                    details: 'Domain mapping pending...'
                 });
-                inorganicConfidence += p.probability;
             }
         });
 
-        // Final Logic
+        // ── WASTE LOGISTICS SCORING ──────────────────────────────────────────
         let score = 95;
-        
-        // E-Waste is a total fail for Biogas
-        if (isEWaste) {
-            score = 15;
-        } else if (inorganicConfidence > 0.1) {
-            score = 100 - (inorganicConfidence * 160);
-        }
-        
-        if (!isEWaste && organicConfidence < 0.05 && inorganicConfidence < 0.05) {
-            score = 35; // Unidentified debris
-        }
+        if (toxicConfidence > 0.05) score = 10;
+        else if (inorganicConfidence > 0.1) score = 100 - (inorganicConfidence * 180);
+        else if (carbonConfidence > 0.2) score = 85; // Carbon sources are okay but need mixing
 
         score = Math.max(5, Math.min(100, Math.round(score)));
 
         return {
             segregationScore: score,
             overallGrade: score > 90 ? 'Excellent' : score > 75 ? 'Good' : score > 40 ? 'Fair' : 'Poor',
-            gradeSummary: isEWaste ? "CRITICAL: Electronic waste detected. Toxic to biogas systems." : `AI identified "${predictions[0].className.split(',')[0]}" with ${Math.round(predictions[0].probability * 100)}% confidence.`,
-            detectedItems: detectedItems.length ? detectedItems : [{ name: predictions[0].className.split(',')[0], category: 'Unknown', isContaminant: true, emoji: '❓' }],
-            recommendations: score < 70 ? [{ icon: '☢️', text: 'Hazardous/Inorganic waste detected. REJECT BATCH.' }] : [{ icon: '✨', text: 'Clean batch confirmed by AI.' }],
-            biogasSuitability: score > 75 ? 'Ideal' : 'Reject',
-            estimatedOrganicPercent: isEWaste ? 2 : Math.round(organicConfidence * 100),
+            gradeSummary: toxicConfidence > 0.05 ? "CRITICAL: Toxic inhibitors detected in flow." : 
+                          score > 85 ? "High-purity biogenic stream detected." : "Mixed stream with inhibitor presence.",
+            detectedItems: detectedItems.slice(0, 4),
+            recommendations: score < 75 ? [{ icon: '🧤', text: 'Inhibitors detected. Manual segregation required before digestion.' }] : 
+                                          [{ icon: '⚡', text: 'Optimal feedstock. High methane potential confirmed.' }],
+            biogasSuitability: score > 80 ? 'Ideal' : score > 50 ? 'Acceptable' : 'Reject',
+            estimatedOrganicPercent: Math.round((organicConfidence + carbonConfidence * 0.5) * 100),
             actionRequired: score < 80,
-            stats: { g: Math.round(organicConfidence*100), r: isEWaste ? 100 : 0, b: Math.round(inorganicConfidence*100), v: isEWaste ? 99 : 0 }
+            stats: { 
+                g: Math.round(organicConfidence * 100), 
+                r: Math.round(carbonConfidence * 100), 
+                b: Math.round(inorganicConfidence * 100), 
+                v: Math.round(toxicConfidence * 100) 
+            }
         };
     }
 
