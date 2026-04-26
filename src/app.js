@@ -256,6 +256,9 @@ function buildOrderCard(o, role) {
   if (role === 'plant' && o.status === 'at_plant' && o.plantId === SESSION.id) {
     acts = `<button class="btn btn-primary btn-sm" onclick="openPlantConfirm('${o.id}')">Confirm Receipt ✓</button>`;
   }
+  if (['provider', 'rider', 'plant'].includes(role) && o.status === 'completed') {
+    acts += `<button class="btn btn-outline-danger btn-sm" onclick="deleteOrder('${o.id}')" style="margin-left:auto;">🗑 Delete Record</button>`;
+  }
 
   return `
     <div class="order-card" data-status="${o.status}">
@@ -389,6 +392,12 @@ window.cancelOrder = function(id) {
   o.status = 'rejected'; saveOrder(o); showToast("Cancelled."); refreshCurrentView();
 }
 
+window.deleteOrder = function(id) {
+  window.localStorage.removeItem(STORAGE_KEY_PREFIX + 'ord:' + id);
+  showToast("✓ Record Deleted");
+  refreshCurrentView(true);
+}
+
 
 // ════════ RIDER LOGIC ════════
 async function renderRider(mc, fullRender) {
@@ -453,7 +462,14 @@ async function renderRider(mc, fullRender) {
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(rMap);
       
       const rIco = L.divIcon({html:"<div style='width:16px;height:16px;background:var(--blue);border-radius:50%;border:2px solid white;box-shadow:0 0 10px rgba(0,0,0,0.5);'></div>", className:''});
-      L.marker([SESSION.lat, SESSION.lng], {icon:rIco}).addTo(rMap).bindPopup("You (Rider)").openPopup();
+      const rMarker = L.marker([SESSION.lat, SESSION.lng], {icon:rIco, draggable:true}).addTo(rMap).bindPopup("You (Rider) — <b>Drag me</b> to update exact GPS!").openPopup();
+      
+      rMarker.on('dragend', function(e) {
+        const mPos = rMarker.getLatLng();
+        SESSION.lat = mPos.lat; SESSION.lng = mPos.lng;
+        DB.set('acc:'+SESSION.id, SESSION);
+        refreshCurrentView(false); // Update polyline and distance silently
+      });
       
       if(active) {
         const pIco = L.divIcon({html:"<div style='width:16px;height:16px;background:var(--amber);border-radius:50%;border:2px solid white;'></div>", className:''});
