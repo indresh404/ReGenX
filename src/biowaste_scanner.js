@@ -106,9 +106,12 @@ const BioScanner = (() => {
           </div>
 
           <button class="btn btn-primary btn-sm btn-full" onclick="BioScanner.__saveApiKey()">Save & Apply</button>
-          <p style="font-size:10px; color:var(--text-muted); margin-top:12px; line-height:1.4;">
-            To use <strong>Real AI</strong>, enter your key. If empty, the scanner uses <strong>Smart Vision</strong> to analyze photo colors locally.
-          </p>
+          <div style="margin-top:16px; padding:12px; background:rgba(13, 148, 136, 0.1); border-radius:10px; border:1px solid var(--green);">
+            <div style="font-size:11px; font-weight:700; color:var(--green); text-transform:uppercase; margin-bottom:4px;">✨ Free AI Mode Active</div>
+            <p style="font-size:10px; color:var(--text-muted); line-height:1.4;">
+              The scanner is currently using <strong>Local TensorFlow AI</strong>. No API key or internet is required for object recognition.
+            </p>
+          </div>
         </div>
 
         <div id="bws-main-view">
