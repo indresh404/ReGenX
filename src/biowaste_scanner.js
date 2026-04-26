@@ -133,7 +133,7 @@ const BioScanner = (() => {
             </div>
           </div>
 
-          <div class="cam-controls" id="bws-controls">
+          <div class="cam-controls" id="bws-controls" style="margin-top:20px; display:flex; gap:12px; justify-content:center;">
             <button class="btn btn-secondary" onclick="BioScanner.__clickUpload()">🖼 Upload</button>
             <button class="btn btn-primary" id="bws-btn-main" style="min-width:180px;" onclick="BioScanner.__startCamera()">📷 Start Camera</button>
           </div>
@@ -169,16 +169,25 @@ const BioScanner = (() => {
     }
 
     // ── Camera ─────────────────────────────────────────────────────────────────
-    function __setMode(mode) {
-        document.getElementById('bws-mode-cam')?.classList.toggle('on', mode === 'camera');
-        document.getElementById('bws-mode-upload')?.classList.toggle('on', mode === 'upload');
-        if (mode === 'upload') { __stopCamera(); __clickUpload(); }
-        else __startCamera();
+    function __setMode(m) {
+        __mode = m;
+        document.querySelectorAll('.cam-mode-btn').forEach(b => b.classList.remove('on'));
+        const btn = document.getElementById('bws-mode-' + m);
+        if (btn) btn.classList.add('on');
+        
+        const mainBtn = document.getElementById('bws-btn-main');
+        if (m === 'upload') {
+            if (mainBtn) { mainBtn.textContent = '🖼 Select File'; mainBtn.onclick = () => __clickUpload(); }
+        } else {
+            if (mainBtn) { mainBtn.textContent = '📷 Start Camera'; mainBtn.onclick = () => __startCamera(); }
+        }
     }
 
     function __clickUpload() {
-        const fi = document.getElementById('file-input');
-        if (fi) { fi.removeAttribute('capture'); fi.click(); }
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = 'image/*';
+        input.onchange = e => handleFileUpload(e);
+        input.click();
     }
 
     function handleFileUpload(event) {
@@ -274,7 +283,7 @@ const BioScanner = (() => {
         __captureFrame();
 
         const resultArea = document.getElementById('bws-result');
-        resultArea.innerHTML = `
+        if (resultArea) resultArea.innerHTML = `
       <div class="result-panel">
         <div class="analysing-box">
           <div class="bw-spinner"></div>

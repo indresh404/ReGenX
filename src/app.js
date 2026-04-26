@@ -1337,5 +1337,16 @@ function initPlChart() {
 }
 
 // ── INIT ──
+(function seedDB() {
+  if (!DB.get('iot-bins')) {
+    const bins = [
+      { id: 'bin-1', name: 'West Wing Organic Hub', fill: 24, rate: 0.8, status: 'active' },
+      { id: 'bin-2', name: 'Kitchen Processing Unit', fill: 68, rate: 1.2, status: 'active' },
+      { id: 'bin-3', name: 'Main Disposal Pit', fill: 12, rate: 0.4, status: 'active' }
+    ];
+    DB.set('iot-bins', bins);
+  }
+})();
+
 document.getElementById('login-screen').style.display = 'flex';
 switchAuthTab('login');
