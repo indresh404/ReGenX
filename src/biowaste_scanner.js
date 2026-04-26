@@ -13,7 +13,7 @@ const BioScanner = (() => {
     let __imageB64 = null;
     let __opts = {};
     let __apiKey = '';
-    let __aiProvider = 'gemini'; 
+    let __aiProvider = 'gemini';
     let __tfModel = null; // Real AI Model
 
     // ── Storage helpers ────────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ const BioScanner = (() => {
         reader.onload = e => {
             const dataURL = e.target.result;
             __imageB64 = dataURL.split(',')[1];
-            
+
             // Sync with canvas for analysis
             const img = new Image();
             img.onload = () => {
@@ -324,32 +324,222 @@ const BioScanner = (() => {
         const canvas = document.getElementById('bws-canvas');
         if (!__tfModel) {
             __toast('⌛ AI Model still loading...');
-            return __smartSimulation(); 
+            return __smartSimulation();
         }
 
         const predictions = await __tfModel.classify(canvas);
-        
+
         // ── WASTE DOMAIN INTERPRETER (Professional Lexicon) ──────────────────
         const WASTE_MAP = {
-            'fruit': { name: 'Biogenic Bio-Mass', type: 'Organic', cn: '20:1', moist: '85%', emoji: '🍎' },
-            'banana': { name: 'High-Sugar Bio-Mass', type: 'Organic', cn: '30:1', moist: '75%', emoji: '🍌' },
-            'orange': { name: 'Citric Bio-Mass', type: 'Organic', cn: '25:1', moist: '80%', emoji: '🍊' },
-            'apple': { name: 'Biogenic Fiber', type: 'Organic', cn: '35:1', moist: '82%', emoji: '🍎' },
-            'veg': { name: 'Leafy Bio-Mass', type: 'Organic', cn: '15:1', moist: '90%', emoji: '🍃' },
-            'leaf': { name: 'Green Bio-Mass', type: 'Organic', cn: '20:1', moist: '70%', emoji: '🌿' },
-            'food': { name: 'Mixed Food Scraps', type: 'Organic', cn: '18:1', moist: '75%', emoji: '🍲' },
-            'bread': { name: 'High-Starch Organic', type: 'Organic', cn: '30:1', moist: '35%', emoji: '🍞' },
-            'meat': { name: 'Proteinaceous Waste', type: 'Organic', cn: '5:1', moist: '70%', emoji: '🥩' },
-            'plastic': { name: 'Polymer Inhibitor', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🥤' },
-            'bottle': { name: 'HDPE/PET Contaminant', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🧴' },
-            'cup': { name: 'Single-Use Polymer', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🥤' },
-            'wrapper': { name: 'Laminated Film', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '📦' },
-            'can': { name: 'Metallic Contaminant', type: 'Inorganic', cn: 'N/A', moist: '0%', emoji: '🥫' },
-            'paper': { name: 'Cellulosic Waste', type: 'Carbon-Source', cn: '100:1', moist: '10%', emoji: '📄' },
-            'cardboard': { name: 'High-Carbon Bulking Agent', type: 'Carbon-Source', cn: '350:1', moist: '12%', emoji: '📦' },
-            'circuit': { name: 'Hazardous E-Waste', type: 'Toxic', cn: 'N/A', moist: '0%', emoji: '☢️' },
-            'board': { name: 'Hazardous PCB', type: 'Toxic', cn: 'N/A', moist: '0%', emoji: '☢️' },
-            'battery': { name: 'Toxic Chemical Cell', type: 'Toxic', cn: 'N/A', moist: '0%', emoji: '🔋' }
+            // 🍎 ORGANIC – HIGHLY ACCEPTABLE
+            fruit: {
+                name: 'Biogenic Bio-Mass',
+                type: 'Organic',
+                cn: '20:1',
+                moist: '85%',
+                biodegradable: true,
+                digestion: 'Fast',
+                biogasYield: 'High',
+                contaminationRisk: 'Low',
+                acceptable: true,
+                reason: 'Ideal for anaerobic digestion',
+                emoji: '🍎'
+            },
+
+            banana: {
+                name: 'High-Sugar Bio-Mass',
+                type: 'Organic',
+                cn: '30:1',
+                moist: '75%',
+                biodegradable: true,
+                digestion: 'Very Fast',
+                biogasYield: 'Very High',
+                contaminationRisk: 'Low',
+                acceptable: true,
+                reason: 'Excellent methane producer',
+                emoji: '🍌'
+            },
+
+            vegetable: {
+                name: 'Leafy Bio-Mass',
+                type: 'Organic',
+                cn: '15:1',
+                moist: '90%',
+                biodegradable: true,
+                digestion: 'Fast',
+                biogasYield: 'Medium',
+                contaminationRisk: 'Low',
+                acceptable: true,
+                reason: 'Nitrogen rich, balances carbon waste',
+                emoji: '🥬'
+            },
+
+            food: {
+                name: 'Mixed Food Waste',
+                type: 'Organic',
+                cn: '18:1',
+                moist: '75%',
+                biodegradable: true,
+                digestion: 'Fast',
+                biogasYield: 'High',
+                contaminationRisk: 'Medium',
+                acceptable: true,
+                reason: 'Needs segregation before processing',
+                emoji: '🍲'
+            },
+
+            // 🟡 CONDITIONAL (NEEDS CONTROL)
+            bread: {
+                name: 'High-Starch Organic',
+                type: 'Organic',
+                cn: '30:1',
+                moist: '35%',
+                biodegradable: true,
+                digestion: 'Moderate',
+                biogasYield: 'Medium',
+                contaminationRisk: 'Medium',
+                acceptable: true,
+                condition: 'Limit quantity to avoid acidity',
+                reason: 'Can disturb pH balance in digester',
+                emoji: '🍞'
+            },
+
+            meat: {
+                name: 'Proteinaceous Waste',
+                type: 'Organic',
+                cn: '5:1',
+                moist: '70%',
+                biodegradable: true,
+                digestion: 'Slow',
+                biogasYield: 'Medium',
+                contaminationRisk: 'High',
+                acceptable: false,
+                reason: 'Causes odor, pathogens, and ammonia toxicity',
+                emoji: '🥩'
+            },
+
+            dairy: {
+                name: 'Lipid-Rich Waste',
+                type: 'Organic',
+                cn: '10:1',
+                moist: '80%',
+                biodegradable: true,
+                digestion: 'Slow',
+                biogasYield: 'High',
+                contaminationRisk: 'High',
+                acceptable: false,
+                reason: 'Forms scum layer, disrupts digestion',
+                emoji: '🥛'
+            },
+
+            // 🌿 CARBON SOURCES (BALANCING MATERIAL)
+            dryLeaves: {
+                name: 'Dry Leaf Litter',
+                type: 'Carbon-Source',
+                cn: '60:1',
+                moist: '10%',
+                biodegradable: true,
+                digestion: 'Slow',
+                biogasYield: 'Low',
+                contaminationRisk: 'Low',
+                acceptable: true,
+                role: 'Bulking agent',
+                reason: 'Balances wet waste C/N ratio',
+                emoji: '🍂'
+            },
+
+            sawdust: {
+                name: 'Wood Residue',
+                type: 'Carbon-Source',
+                cn: '400:1',
+                moist: '8%',
+                biodegradable: true,
+                digestion: 'Very Slow',
+                biogasYield: 'Very Low',
+                contaminationRisk: 'Low',
+                acceptable: true,
+                role: 'Composting only',
+                reason: 'Not suitable for biogas, but good for compost',
+                emoji: '🪵'
+            },
+
+            paper: {
+                name: 'Cellulosic Waste',
+                type: 'Carbon-Source',
+                cn: '100:1',
+                moist: '10%',
+                biodegradable: true,
+                digestion: 'Slow',
+                biogasYield: 'Low',
+                contaminationRisk: 'Low',
+                acceptable: true,
+                role: 'Carbon balancer',
+                emoji: '📄'
+            },
+
+            cardboard: {
+                name: 'High-Carbon Bulking Agent',
+                type: 'Carbon-Source',
+                cn: '350:1',
+                moist: '12%',
+                biodegradable: true,
+                digestion: 'Very Slow',
+                biogasYield: 'Very Low',
+                acceptable: true,
+                role: 'Structure support',
+                emoji: '📦'
+            },
+
+            // ❌ NON-ACCEPTABLE (REJECT)
+            plastic: {
+                name: 'Polymer Inhibitor',
+                type: 'Inorganic',
+                biodegradable: false,
+                acceptable: false,
+                reason: 'Non-biodegradable, blocks digestion',
+                action: 'Reject & send to recycling',
+                emoji: '🥤'
+            },
+
+            glass: {
+                name: 'Silica Waste',
+                type: 'Inorganic',
+                biodegradable: false,
+                acceptable: false,
+                reason: 'Non-degradable, damages machinery',
+                action: 'Recycle separately',
+                emoji: '🍶'
+            },
+
+            metal: {
+                name: 'Metallic Waste',
+                type: 'Inorganic',
+                biodegradable: false,
+                acceptable: false,
+                reason: 'Causes mechanical damage',
+                action: 'Send to scrap recycling',
+                emoji: '🥫'
+            },
+
+            sanitary: {
+                name: 'Sanitary Waste',
+                type: 'Hazardous',
+                biodegradable: false,
+                acceptable: false,
+                reason: 'Biohazard risk',
+                action: 'Incineration required',
+                emoji: '🧻'
+            },
+
+            battery: {
+                name: 'Toxic Chemical Waste',
+                type: 'Hazardous',
+                biodegradable: false,
+                acceptable: false,
+                reason: 'Heavy metals contaminate system',
+                action: 'Hazardous disposal',
+                emoji: '🔋'
+            }
         };
 
         let detectedItems = [];
@@ -361,7 +551,7 @@ const BioScanner = (() => {
         predictions.forEach(p => {
             const label = p.className.toLowerCase();
             let found = false;
-            
+
             for (let key in WASTE_MAP) {
                 if (label.includes(key)) {
                     const data = WASTE_MAP[key];
@@ -372,17 +562,17 @@ const BioScanner = (() => {
                         emoji: data.emoji,
                         details: `C:N ${data.cn} | Moist: ${data.moist}`
                     });
-                    
+
                     if (data.type === 'Organic') organicConfidence += p.probability;
                     if (data.type === 'Inorganic') inorganicConfidence += p.probability;
                     if (data.type === 'Toxic') toxicConfidence += p.probability;
                     if (data.type === 'Carbon-Source') carbonConfidence += p.probability;
-                    
+
                     found = true;
                     break;
                 }
             }
-            
+
             if (!found && p.probability > 0.15) {
                 // Fallback for unknown items
                 const isLikelyOrganic = (label.includes('dog') || label.includes('cat') || label.includes('bird')); // MobileNet quirk
@@ -407,19 +597,19 @@ const BioScanner = (() => {
         return {
             segregationScore: score,
             overallGrade: score > 90 ? 'Excellent' : score > 75 ? 'Good' : score > 40 ? 'Fair' : 'Poor',
-            gradeSummary: toxicConfidence > 0.05 ? "CRITICAL: Toxic inhibitors detected in flow." : 
-                          score > 85 ? "High-purity biogenic stream detected." : "Mixed stream with inhibitor presence.",
+            gradeSummary: toxicConfidence > 0.05 ? "CRITICAL: Toxic inhibitors detected in flow." :
+                score > 85 ? "High-purity biogenic stream detected." : "Mixed stream with inhibitor presence.",
             detectedItems: detectedItems.slice(0, 4),
-            recommendations: score < 75 ? [{ icon: '🧤', text: 'Inhibitors detected. Manual segregation required before digestion.' }] : 
-                                          [{ icon: '⚡', text: 'Optimal feedstock. High methane potential confirmed.' }],
+            recommendations: score < 75 ? [{ icon: '🧤', text: 'Inhibitors detected. Manual segregation required before digestion.' }] :
+                [{ icon: '⚡', text: 'Optimal feedstock. High methane potential confirmed.' }],
             biogasSuitability: score > 80 ? 'Ideal' : score > 50 ? 'Acceptable' : 'Reject',
             estimatedOrganicPercent: Math.round((organicConfidence + carbonConfidence * 0.5) * 100),
             actionRequired: score < 80,
-            stats: { 
-                g: Math.round(organicConfidence * 100), 
-                r: Math.round(carbonConfidence * 100), 
-                b: Math.round(inorganicConfidence * 100), 
-                v: Math.round(toxicConfidence * 100) 
+            stats: {
+                g: Math.round(organicConfidence * 100),
+                r: Math.round(carbonConfidence * 100),
+                b: Math.round(inorganicConfidence * 100),
+                v: Math.round(toxicConfidence * 100)
             }
         };
     }
