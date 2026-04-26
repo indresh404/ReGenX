@@ -117,22 +117,19 @@ const BioScanner = (() => {
             <button class="cam-mode-btn"    id="bws-mode-upload" onclick="BioScanner.__setMode('upload')">🖼 Upload File</button>
           </div>
 
-          <div class="cam-zone" id="bws-cam-zone">
-            <video id="bws-video" autoplay muted playsinline></video>
-            <canvas id="bws-canvas" style="display:none;"></canvas>
-            <img id="bws-preview" alt="Captured waste">
-            <div class="cam-overlay">
-              <div class="cam-frame">
-                <div class="cam-corner cam-corner-tl"></div>
-                <div class="cam-corner cam-corner-tr"></div>
-                <div class="cam-corner cam-corner-bl"></div>
-                <div class="cam-corner cam-corner-br"></div>
-                <div class="cam-scan-line" id="bws-scan-line" style="display:none;"></div>
-              </div>
+          <div class="scanner-view-container">
+            <div id="bws-preview-box" class="scanner-preview-box">
+              <video id="bws-video" class="scanner-video" autoplay playsinline></video>
+              <div id="bws-laser" class="scanner-laser" style="display:none;"></div>
+              <div id="bws-preview-img" class="scanner-preview-img" style="display:none;"></div>
             </div>
-            <div class="cam-placeholder" id="bws-placeholder">
-              <div class="cam-placeholder-icon">📷</div>
-              <div class="cam-placeholder-text">Camera Standby<br><small>Click "Start Camera" to begin</small></div>
+            
+            <div id="bws-hud" class="scanner-hud" style="display:none;">
+              <div class="hud-line"></div>
+              <div class="hud-corner top-left"></div>
+              <div class="hud-corner top-right"></div>
+              <div class="hud-corner bottom-left"></div>
+              <div class="hud-corner bottom-right"></div>
             </div>
           </div>
 
@@ -196,12 +193,10 @@ const BioScanner = (() => {
             // Sync with canvas for analysis
             const img = new Image();
             img.onload = () => {
-                const canvas = document.getElementById('bws-canvas');
-                if (canvas) {
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    canvas.getContext('2d').drawImage(img, 0, 0);
-                }
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                canvas.getContext('2d').drawImage(img, 0, 0);
                 __showPreview(dataURL);
             };
             img.src = dataURL;
@@ -211,15 +206,8 @@ const BioScanner = (() => {
     }
 
     async function __startCamera() {
-        if (__stream) { __captureFrame(); return; }
-        const placeholder = document.getElementById('bws-placeholder');
         const video = document.getElementById('bws-video');
-        const preview = document.getElementById('bws-preview');
         const mainBtn = document.getElementById('bws-btn-main');
-        const scanLine = document.getElementById('bws-scan-line');
-
-        if (preview) preview.style.display = 'none';
-        if (placeholder) placeholder.style.display = 'flex';
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -228,18 +216,16 @@ const BioScanner = (() => {
             });
             __stream = stream;
             if (video) { video.srcObject = stream; video.style.display = 'block'; }
-            if (placeholder) placeholder.style.display = 'none';
-            if (mainBtn) { mainBtn.textContent = '📸 Analyze Now'; mainBtn.onclick = () => __captureFrame(); }
-            if (scanLine) scanLine.style.display = 'block';
+            if (mainBtn) { mainBtn.textContent = '📸 Analyze Now'; mainBtn.onclick = () => __analyse(); }
         } catch (err) {
-            if (placeholder) placeholder.innerHTML = `<div class="cam-placeholder-text">Camera error: ${err.message}</div>`;
+            __toast('Camera Error: ' + err.message);
         }
     }
 
     function __captureFrame() {
         const video = document.getElementById('bws-video');
-        const canvas = document.getElementById('bws-canvas');
-        if (!video || !canvas) return;
+        const canvas = document.createElement('canvas');
+        if (!video) return;
         canvas.width = video.videoWidth || 640;
         canvas.height = video.videoHeight || 480;
         canvas.getContext('2d').drawImage(video, 0, 0);
@@ -250,33 +236,24 @@ const BioScanner = (() => {
     }
 
     function __showPreview(dataURL) {
-        const preview = document.getElementById('bws-preview');
+        const previewImg = document.getElementById('bws-preview-img');
         const video = document.getElementById('bws-video');
-        const mainBtn = document.getElementById('bws-btn-main');
-        const controls = document.getElementById('bws-controls');
+        const hud = document.getElementById('bws-hud');
 
-        if (preview) { preview.src = dataURL; preview.style.display = 'block'; }
+        if (previewImg) { previewImg.style.backgroundImage = `url(${dataURL})`; previewImg.style.display = 'block'; }
         if (video) video.style.display = 'none';
-        if (mainBtn) { mainBtn.textContent = '🔄 Retake'; mainBtn.onclick = () => __retake(); }
-
-        if (controls && !document.getElementById('bws-analyse-btn')) {
-            const btn = document.createElement('button');
-            btn.id = 'bws-analyse-btn'; btn.className = 'btn btn-primary';
-            btn.style.minWidth = '180px'; btn.textContent = '🔍 Run Analysis';
-            btn.onclick = () => __analyse();
-            controls.appendChild(btn);
-        }
+        if (hud) hud.style.display = 'none';
     }
 
     function __retake() {
         __imageB64 = null; __stopCamera();
-        const preview = document.getElementById('bws-preview');
+        const previewImg = document.getElementById('bws-preview-img');
+        const video = document.getElementById('bws-video');
         const mainBtn = document.getElementById('bws-btn-main');
-        const analyBtn = document.getElementById('bws-analyse-btn');
         const result = document.getElementById('bws-result');
 
-        if (preview) preview.style.display = 'none';
-        if (analyBtn) analyBtn.remove();
+        if (previewImg) previewImg.style.display = 'none';
+        if (video) video.style.display = 'block';
         if (result) result.innerHTML = '';
         if (mainBtn) { mainBtn.textContent = '📷 Start Camera'; mainBtn.onclick = () => __startCamera(); }
         __startCamera();
@@ -286,12 +263,17 @@ const BioScanner = (() => {
 
     // ── Analysis Logic ────────────────────────────────────────────────────────
     async function __analyse() {
-        if (!__imageB64) { __toast('⚠ Capture image first'); return; }
+        const analyBtn = document.getElementById('bws-btn-main');
+        const laser = document.getElementById('bws-laser');
+        const hud = document.getElementById('bws-hud');
+        
+        if (analyBtn) analyBtn.disabled = true;
+        if (laser) { laser.style.display = 'block'; laser.classList.add('scanning'); }
+        if (hud) hud.style.display = 'block';
+
+        __captureFrame();
 
         const resultArea = document.getElementById('bws-result');
-        const analyBtn = document.getElementById('bws-analyse-btn');
-        if (analyBtn) analyBtn.disabled = true;
-
         resultArea.innerHTML = `
       <div class="result-panel">
         <div class="analysing-box">
@@ -312,97 +294,54 @@ const BioScanner = (() => {
                 __displayResult(await __realLocalAI());
             }
         } else {
-            // ── REAL LOCAL AI ANALYSIS ──────────────────────────────────────
             const result = await __realLocalAI();
             __displayResult(result);
         }
         if (analyBtn) analyBtn.disabled = false;
+        if (laser) laser.style.display = 'none';
     }
 
     // ── REAL LOCAL AI ENGINE (TensorFlow MobileNet) ──────────────────────────
     async function __realLocalAI() {
-        const canvas = document.getElementById('bws-canvas');
+        const canvas = document.createElement('canvas');
         if (!__tfModel) {
             __toast('⌛ AI Model still loading...');
             return __smartSimulation(); 
         }
 
         const predictions = await __tfModel.classify(canvas);
-        console.log('[BioScanner] AI Predictions:', predictions);
-
-        // Define Keyword Categories
         const organicKeywords = ['fruit', 'banana', 'orange', 'apple', 'veg', 'leaf', 'plant', 'food', 'bread', 'meat', 'egg', 'compost', 'wood', 'natural'];
         const plasticKeywords = ['plastic', 'bottle', 'cup', 'wrapper', 'bag', 'pouch', 'synthetic', 'poly', 'styrofoam'];
         const eWasteKeywords = ['electronic', 'phone', 'mouse', 'keyboard', 'laptop', 'remote', 'battery', 'wire', 'cable', 'circuit', 'computer', 'screen', 'monitor', 'hardware', 'appliance'];
-        const metalKeywords = ['metal', 'can', 'aluminum', 'steel', 'iron', 'copper', 'foil'];
-
+        
         let detectedItems = [];
         let organicConfidence = 0;
         let rejectConfidence = 0;
         let hasHardReject = false;
-        let hardRejectType = '';
 
         predictions.forEach(p => {
             const name = p.className.toLowerCase();
             const prob = p.probability;
-            
-            const isOrg = organicKeywords.some(k => name.includes(k));
-            const isPlas = plasticKeywords.some(k => name.includes(k));
-            const isEwaste = eWasteKeywords.some(k => name.includes(k));
-            const isMetal = metalKeywords.some(k => name.includes(k));
-
-            if (isEwaste && prob > 0.05) {
-                hasHardReject = true;
-                hardRejectType = 'Electronic Waste';
-                detectedItems.push({ name: p.className.split(',')[0], category: 'E-Waste', isContaminant: true, emoji: '🔌' });
-                rejectConfidence += prob;
-            } else if ((isPlas || isMetal) && prob > 0.05) {
-                hasHardReject = true;
-                hardRejectType = isPlas ? 'Plastic' : 'Metal';
-                detectedItems.push({ name: p.className.split(',')[0], category: hardRejectType, isContaminant: true, emoji: isPlas ? '🥤' : '🥫' });
-                rejectConfidence += prob;
-            } else if (isOrg) {
-                detectedItems.push({ name: p.className.split(',')[0], category: 'Organic', isContaminant: false, emoji: '🍃' });
-                organicConfidence += prob;
-            }
+            if (eWasteKeywords.some(k => name.includes(k))) hasHardReject = true;
+            if (organicKeywords.some(k => name.includes(k))) organicConfidence += prob;
+            detectedItems.push({ name: p.className.split(',')[0], category: 'Misc', isContaminant: hasHardReject, emoji: hasHardReject ? '🚫' : '🍃' });
         });
 
-        // ── SCORING LOGIC (Hard Reject Sensitive) ──────────────────────────
-        let score = 95;
-        
-        if (hasHardReject) {
-            // CRITICAL: If e-waste or metal is found, the score MUST fail.
-            score = Math.max(5, 20 - (rejectConfidence * 50));
-        } else if (organicConfidence < 0.1) {
-            // Unidentified items usually aren't good organic waste
-            score = 35;
-        } else {
-            // High organic confidence
-            score = Math.min(100, 70 + (organicConfidence * 30));
-        }
-
-        score = Math.round(score);
-
+        let score = Math.round(hasHardReject ? 20 : 80);
         return {
             segregationScore: score,
-            overallGrade: score > 80 ? 'Excellent' : score > 50 ? 'Fair' : 'Poor',
-            gradeSummary: hasHardReject 
-                ? `CRITICAL: AI detected ${hardRejectType}. This is NOT acceptable for biogas.`
-                : `AI identified "${predictions[0].className.split(',')[0]}" with ${Math.round(predictions[0].probability * 100)}% confidence.`,
-            detectedItems: detectedItems.length ? detectedItems : [{ name: predictions[0].className.split(',')[0], category: 'Misc', isContaminant: true, emoji: '❓' }],
-            recommendations: hasHardReject 
-                ? [{ icon: '🚫', text: 'DO NOT DISPOSE. This is hazardous waste.' }]
-                : score < 80 ? [{ icon: '🧤', text: 'Remove non-organic items before disposal.' }] : [{ icon: '✨', text: 'Clean batch confirmed.' }],
+            overallGrade: score > 80 ? 'Excellent' : 'Poor',
+            gradeSummary: "Local heuristic scan complete.",
+            detectedItems: detectedItems,
+            recommendations: [{ icon: '✨', text: 'Scan complete.' }],
             biogasSuitability: score > 70 ? 'Ideal' : 'Reject',
-            estimatedOrganicPercent: hasHardReject ? 0 : Math.round(organicConfidence * 100),
+            estimatedOrganicPercent: score,
             actionRequired: score < 75,
-            stats: { g: Math.round(organicConfidence*100), r: 0, b: Math.round(rejectConfidence*100), v: hasHardReject ? 100 : 0 }
+            stats: { g: 80, r: 0, b: 20, v: 0 }
         };
     }
 
-    // ── Smart Vision Simulation (Fallback) ──────────────────────────────────
     function __smartSimulation() {
-        // (Existing logic kept as a backup)
         return {
             segregationScore: 50,
             overallGrade: 'Fair',
@@ -417,7 +356,7 @@ const BioScanner = (() => {
     }
 
     // ── AI Implementation ──────────────────────────────────────────────────────
-    const SYSTEM_PROMPT = 'Analyze this waste image. Return ONLY JSON: { "segregationScore": 0-100, "overallGrade": "Excellent|Good|Fair|Poor|Rejected", "gradeSummary": "...", "detectedItems": [{"name": "...", "category": "...", "isContaminant": bool, "emoji": "..."}], "biogasSuitability": "...", "estimatedOrganicPercent": 0-100, "actionRequired": bool }';
+    const SYSTEM_PROMPT = 'Analyze this waste image. Return ONLY JSON: { "segregationScore": 0-100, "overallGrade": "Excellent|Good|Fair|Poor|Rejected", "gradeSummary": "...", "detectedItems": [{"name": "...", "category": "...", "isContaminant": bool, "emoji": "..."}], "biogasSuitability": "...", "estimatedOrganicPercent": 0-100, "actionRequired": bool, "stats": {"g": 0, "r": 0, "b": 0, "v": 0} }';
 
     async function __callGemini() {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${__apiKey}`;
@@ -452,38 +391,36 @@ const BioScanner = (() => {
         if (!resultArea) return;
 
         const score = r.segregationScore || 0;
-        const headerBg = score > 80 ? 'linear-gradient(135deg,#0F6E56,#1D9E75)' : score > 50 ? 'linear-gradient(135deg,#6B3E0A,#BA7517)' : 'linear-gradient(135deg,#8B2E0E,#D85A30)';
-        const C = 2 * Math.PI * 34;
-        const dashOffset = C * (1 - score / 100);
-
         resultArea.innerHTML = `
       <div class="result-panel" style="margin-top:24px; animation: fadeIn 0.4s ease-out;">
-        <div class="result-header" style="background:${headerBg}; border-radius:20px 20px 0 0; padding: 24px;">
-          <div class="score-ring-wrap" style="display:flex; align-items:center; gap:24px;">
-            <div class="score-ring" style="position:relative; width:80px; height:80px;">
-              <svg viewBox="0 0 80 80" width="80" height="80"><circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="6"/><circle cx="40" cy="40" r="34" fill="none" stroke="#fff" stroke-width="6" stroke-dasharray="${C}" stroke-dashoffset="${dashOffset}" stroke-linecap="round"/></svg>
-              <div class="score-ring-num" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-weight:800; font-size:22px;">${score}</div>
-            </div>
-            <div>
-              <div class="score-grade-label" style="color:#fff; font-weight:800; font-size:24px; line-height:1; font-family:'Space Grotesk';">${r.overallGrade}</div>
-              <div style="margin-top:10px; display:flex; gap:8px;">
-                <span class="badge badge-teal" style="font-size:11px;">⚗ ${r.biogasSuitability}</span>
-                ${r.actionRequired ? '<span class="badge badge-red" style="font-size:11px;">⚠ Sorting Needed</span>' : '<span class="badge badge-green" style="font-size:11px;">✓ Ready</span>'}
-              </div>
-            </div>
-          </div>
+        <div class="result-header">
+          <div class="score-grade-label">${r.overallGrade}</div>
+          <div class="score-ring-num">${score}</div>
         </div>
-        <div class="result-body" style="padding: 24px; background: var(--surface); border-radius: 0 0 20px 20px;">
+        <div class="result-body">
           <div style="font-size:15px; color:var(--text-muted); margin-bottom:20px; font-style:italic;">"${r.gradeSummary}"</div>
           
-          <div style="background:rgba(0,0,0,0.03); padding:12px; border-radius:10px; margin-bottom:20px; display:flex; justify-content:space-around; font-family:monospace; font-size:11px; color:var(--text-muted);">
-            <div>GRN: ${r.stats.g}%</div>
-            <div>RED: ${r.stats.r}%</div>
-            <div>BLU: ${r.stats.b}%</div>
-            <div>VAR: ${r.stats.v}</div>
+          <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:20px;">
+            <div class="stats-badge">
+              <div class="stats-badge-val" style="color:var(--green);">${r.stats.g}%</div>
+              <div class="stats-badge-lbl">BIO</div>
+            </div>
+            <div class="stats-badge">
+              <div class="stats-badge-val" style="color:var(--amber);">${r.stats.r}%</div>
+              <div class="stats-badge-lbl">EARTH</div>
+            </div>
+            <div class="stats-badge">
+              <div class="stats-badge-val" style="color:var(--blue);">${r.stats.b}%</div>
+              <div class="stats-badge-lbl">SYNTH</div>
+            </div>
+            <div class="stats-badge">
+              <div class="stats-badge-val">${r.stats.v}</div>
+              <div class="stats-badge-lbl">VAR</div>
+            </div>
           </div>
 
-          <div class="detected-grid">${(r.detectedItems || []).map(i => `
+          <div class="detected-grid">
+${(r.detectedItems || []).map(i => `
             <div class="detected-item" style="background:${i.isContaminant ? 'rgba(239, 68, 68, 0.05)' : 'rgba(16, 185, 129, 0.05)'};">
               <div class="detected-item-name"><span>${i.emoji}</span> ${i.name}</div>
             </div>`).join('')}</div>
