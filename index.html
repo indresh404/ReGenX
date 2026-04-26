@@ -1,188 +1,203 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ReGenX — Premium BioWaste Platform</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ReGenX — Premium BioWaste Platform</title>
 
-<!-- PWA & Mobile Optimization -->
-<meta name="theme-color" content="#0D9488">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/2103/2103633.png">
+  <!-- PWA & Mobile Optimization -->
+  <meta name="theme-color" content="#0D9488">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/2103/2103633.png">
 
-<!-- Fonts -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet">
 
-<!-- Leaflet (Map) -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Leaflet (Map) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- Chart.js -->
-<!-- TensorFlow.js for Real AI Analysis -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+  <!-- Chart.js -->
+  <!-- TensorFlow.js for Real AI Analysis -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-<!-- Custom Assets -->
-<link rel="stylesheet" href="./src/styles.css?v=2" />
-<script type="module" src="./src/app.js?v=2"></script>
+  <!-- Custom Assets -->
+  <link rel="stylesheet" href="./src/styles.css?v=2" />
+  <script type="module" src="./src/app.js?v=2"></script>
 
 </head>
+
 <body>
 
-<!-- Hidden input for scanner file upload -->
-<input type="file" id="file-input" accept="image/*" style="display:none;" onchange="BioScanner.handleFileUpload(event)">
+  <!-- Hidden input for scanner file upload -->
+  <input type="file" id="file-input" accept="image/*" style="display:none;"
+    onchange="BioScanner.handleFileUpload(event)">
 
-<!-- ════════ LOGIN / REGISTER ════════ -->
-<div id="login-screen">
-  <div class="glass-bg">
-    <div class="blob blob-1"></div>
-    <div class="blob blob-2"></div>
-  </div>
-  
-  <div class="login-box glass-card">
-    <div class="login-logo">
-      <div class="login-logo-icon">🌿</div>ReGenX
-    </div>
-    <p class="login-tagline">Smart circular bio-waste logistics</p>
-    
-    <div class="login-tabs">
-      <button class="tab-btn active" id="tab-login" onclick="switchAuthTab('login')">Login</button>
-      <button class="tab-btn" id="tab-register" onclick="switchAuthTab('register')">Register</button>
+  <!-- ════════ LOGIN / REGISTER ════════ -->
+  <div id="login-screen">
+    <div class="glass-bg">
+      <div class="blob blob-1"></div>
+      <div class="blob blob-2"></div>
     </div>
 
-    <!-- REGISTER VIEW -->
-    <div id="view-register" class="auth-view hidden">
-      <div class="form-group">
-        <label class="form-label">I am a...</label>
-        <div class="role-grid">
-          <div class="role-btn" onclick="selectRole('provider')" id="role-provider">
-            <div class="role-btn-icon">🏨</div>
-            <div class="role-btn-name">Provider</div>
-          </div>
-          <div class="role-btn" onclick="selectRole('rider')" id="role-rider">
-            <div class="role-btn-icon">🚛</div>
-            <div class="role-btn-name">Rider</div>
-          </div>
-          <div class="role-btn" onclick="selectRole('plant')" id="role-plant">
-            <div class="role-btn-icon">⚗️</div>
-            <div class="role-btn-name">Plant</div>
+    <div class="login-box glass-card">
+      <div class="login-logo">
+        <div class="login-logo-icon">🌿</div>ReGenX
+      </div>
+      <p class="login-tagline">Smart circular bio-waste logistics</p>
+
+      <div class="login-tabs">
+        <button class="tab-btn active" id="tab-login" onclick="switchAuthTab('login')">Login</button>
+        <button class="tab-btn" id="tab-register" onclick="switchAuthTab('register')">Register</button>
+      </div>
+
+      <!-- REGISTER VIEW -->
+      <div id="view-register" class="auth-view hidden">
+        <div class="form-group">
+          <label class="form-label">I am a...</label>
+          <div class="role-grid">
+            <div class="role-btn" onclick="selectRole('provider')" id="role-provider">
+              <div class="role-btn-icon">🏨</div>
+              <div class="role-btn-name">Provider</div>
+            </div>
+            <div class="role-btn" onclick="selectRole('rider')" id="role-rider">
+              <div class="role-btn-icon">🚛</div>
+              <div class="role-btn-name">Rider</div>
+            </div>
+            <div class="role-btn" onclick="selectRole('plant')" id="role-plant">
+              <div class="role-btn-icon">⚗️</div>
+              <div class="role-btn-name">Plant</div>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Full Name</label>
-        <input class="form-input" id="reg-name" type="text" placeholder="e.g. Alex Johnson">
-      </div>
-      <div class="form-group" id="reg-org-group">
-        <label class="form-label" id="reg-org-label">Organisation / Entity Name</label>
-        <input class="form-input" id="reg-org" type="text" placeholder="e.g. Omega Hostel">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Location (Search or GPS)</label>
-        <div style="display:flex; gap:8px; margin-bottom:10px;">
-          <input class="form-input" id="loc-search" type="text" placeholder="e.g. Amity Noida" style="flex:1;">
-          <button class="btn btn-secondary" onclick="searchLocation()" style="padding:10px;">🔍</button>
+        <div class="form-group">
+          <label class="form-label">Full Name</label>
+          <input class="form-input" id="reg-name" type="text" placeholder="e.g. Alex Johnson">
         </div>
-        <button class="btn btn-secondary btn-full" id="btn-detect-gps" onclick="detectGPS()">📍 Auto-Detect GPS</button>
-        <div id="gps-status" class="status-text muted" style="margin-top:6px; font-size:12px;">Waiting for location...</div>
-        <div id="reg-map"></div>
+        <div class="form-group" id="reg-org-group">
+          <label class="form-label" id="reg-org-label">Organisation / Entity Name</label>
+          <input class="form-input" id="reg-org" type="text" placeholder="e.g. Omega Hostel">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Location (Search or GPS)</label>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <input class="form-input" id="loc-search" type="text" placeholder="e.g. Amity Noida" style="flex:1;">
+            <button class="btn btn-secondary" onclick="searchLocation()" style="padding:10px;">🔍</button>
+          </div>
+          <button class="btn btn-secondary btn-full" id="btn-detect-gps" onclick="detectGPS()">📍 Auto-Detect
+            GPS</button>
+          <div id="gps-status" class="status-text muted" style="margin-top:6px; font-size:12px;">Waiting for location...
+          </div>
+          <div id="reg-map"></div>
+        </div>
+        <button class="btn btn-primary btn-full" id="btn-submit-reg" onclick="doRegister()"
+          style="margin-top:10px;">Create Account</button>
       </div>
-      <button class="btn btn-primary btn-full" id="btn-submit-reg" onclick="doRegister()" style="margin-top:10px;">Create Account</button>
+
+      <!-- LOGIN VIEW -->
+      <div id="view-login" class="auth-view">
+        <div class="form-group">
+          <label class="form-label">Select Registered Account</label>
+          <select class="form-input" id="login-account">
+            <option value="">-- No accounts registered yet --</option>
+          </select>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doLogin()" style="margin-top:10px;">Enter Dashboard →</button>
+      </div>
+
     </div>
 
-    <!-- LOGIN VIEW -->
-    <div id="view-login" class="auth-view">
-      <div class="form-group">
-        <label class="form-label">Select Registered Account</label>
-        <select class="form-input" id="login-account">
-          <option value="">-- No accounts registered yet --</option>
-        </select>
-      </div>
-      <button class="btn btn-primary btn-full" onclick="doLogin()" style="margin-top:10px;">Enter Dashboard →</button>
+    <!-- SUCCESS SPLASH OVERLAY -->
+    <div class="success-splash" id="success-splash">
+      <div class="success-icon">✓</div>
+      <div class="success-title">Account Created!</div>
+      <div class="success-sub">Welcome to ReGenX. Redirecting you...</div>
     </div>
-
   </div>
 
-  <!-- SUCCESS SPLASH OVERLAY -->
-  <div class="success-splash" id="success-splash">
-    <div class="success-icon">✓</div>
-    <div class="success-title">Account Created!</div>
-    <div class="success-sub">Welcome to ReGenX. Redirecting you...</div>
-  </div>
-</div>
-
-<!-- ════════ APP SHELL ════════ -->
-<div id="app-shell">
-  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-      <div class="topbar-brand-dot"></div><span style="font-weight:700; font-family:'Space Grotesk'; font-size:20px; letter-spacing:-0.5px;">ReGenX</span>
-      <div class="sidebar-close" onclick="toggleSidebar(false)">×</div>
-    </div>
-    <div class="sidebar-nav" id="sidebar-nav">
-      <!-- Injected by JS -->
-    </div>
-
-    <!-- GREEN WALL WIDGET -->
-    <div class="green-wall-widget" id="green-wall-widget" style="display:none;">
-      <div class="gw-header">🌍 The Green Wall</div>
-      <div class="gw-feed" id="gw-feed">
-         <!-- Feed items injected -->
+  <!-- ════════ APP SHELL ════════ -->
+  <div id="app-shell">
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="topbar-brand-dot"></div><span
+          style="font-weight:700; font-family:'Space Grotesk'; font-size:20px; letter-spacing:-0.5px;">ReGenX</span>
+        <div class="sidebar-close" onclick="toggleSidebar(false)">×</div>
       </div>
-    </div>
-
-    <div class="sidebar-footer">
-      <button class="nav-item" id="theme-toggle" onclick="toggleTheme()">
-        <span class="nav-item-icon">🌗</span> Toggle Theme
-      </button>
-    </div>
-  </aside>
-
-  <!-- Main Area -->
-  <main class="main-area">
-    <!-- Topbar -->
-    <header class="topbar glass-nav" style="flex-direction: column; align-items: stretch; height: auto; padding: 0;">
-      <!-- Live Ticker -->
-      <div class="live-ticker-bar">
-        <div class="ticker-label">LIVE</div>
-        <div class="ticker-wrap"><div class="ticker-content" id="global-ticker">System initializing...</div></div>
+      <div class="sidebar-nav" id="sidebar-nav">
+        <!-- Injected by JS -->
       </div>
-      <!-- Main Topbar Content -->
-      <div style="display:flex; justify-content:space-between; align-items:center; padding: 12px 32px; width: 100%; position: relative;">
-        <div class="hamburger" onclick="toggleSidebar()">☰</div>
-        <div class="topbar-title" id="tb-view-title">Dashboard</div>
-        <div class="topbar-user">
-          <div class="token-balance hidden" id="token-balance-container" title="ReGen Tokens">
-            🪙 <span id="token-balance">0</span> <span style="font-size:12px; font-weight:600; color:var(--text-muted)">$RGX</span>
-          </div>
-          <div style="text-align:right; margin-left: 16px; padding-left: 16px; border-left: 1px solid var(--border);">
-            <div class="topbar-name" id="tb-name">—</div>
-            <div class="topbar-role" id="tb-role">—</div>
-          </div>
-          <div class="topbar-avatar" id="tb-avatar" style="cursor:pointer;" onclick="openSettings()" title="Profile Settings"></div>
-          <button class="btn btn-ghost btn-sm" onclick="doLogout()">Logout</button>
+
+      <!-- GREEN WALL WIDGET -->
+      <div class="green-wall-widget" id="green-wall-widget" style="display:none;">
+        <div class="gw-header">🌍 The Green Wall</div>
+        <div class="gw-feed" id="gw-feed">
+          <!-- Feed items injected -->
         </div>
       </div>
-    </header>
 
-    <!-- Dynamic Content -->
-    <div class="content-wrapper" id="main-content">
-      <!-- Views injected here -->
-    </div>
-  </main>
-</div>
+      <div class="sidebar-footer">
+        <button class="nav-item" id="theme-toggle" onclick="toggleTheme()">
+          <span class="nav-item-icon">🌗</span> Toggle Theme
+        </button>
+      </div>
+    </aside>
 
-<!-- Global Components -->
-<div id="toast"></div>
-<div class="modal-overlay" id="modal" onclick="if(event.target === this) closeScanner()">
-  <div class="modal-box glass-card" id="modal-box"></div>
-</div>
+    <!-- Main Area -->
+    <main class="main-area">
+      <!-- Topbar -->
+      <header class="topbar glass-nav" style="flex-direction: column; align-items: stretch; height: auto; padding: 0;">
+        <!-- Live Ticker -->
+        <div class="live-ticker-bar">
+          <div class="ticker-label">LIVE</div>
+          <div class="ticker-wrap">
+            <div class="ticker-content" id="global-ticker">System initializing...</div>
+          </div>
+        </div>
+        <!-- Main Topbar Content -->
+        <div
+          style="display:flex; justify-content:space-between; align-items:center; padding: 12px 32px; width: 100%; position: relative;">
+          <div class="hamburger" onclick="toggleSidebar()">☰</div>
+          <div class="topbar-title" id="tb-view-title">Dashboard</div>
+          <div class="topbar-user">
+            <div class="token-balance hidden" id="token-balance-container" title="ReGen Tokens">
+              🪙 <span id="token-balance">0</span> <span
+                style="font-size:12px; font-weight:600; color:var(--text-muted)">$RGX</span>
+            </div>
+            <div style="text-align:right; margin-left: 16px; padding-left: 16px; border-left: 1px solid var(--border);">
+              <div class="topbar-name" id="tb-name">—</div>
+              <div class="topbar-role" id="tb-role">—</div>
+            </div>
+            <div class="topbar-avatar" id="tb-avatar" style="cursor:pointer;" onclick="openSettings()"
+              title="Profile Settings"></div>
+            <button class="btn btn-ghost btn-sm" onclick="doLogout()">Logout</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Dynamic Content -->
+      <div class="content-wrapper" id="main-content">
+        <!-- Views injected here -->
+      </div>
+    </main>
+  </div>
+
+  <!-- Global Components -->
+  <div id="toast"></div>
+  <div class="modal-overlay" id="modal" onclick="if(event.target === this) closeScanner()">
+    <div class="modal-box glass-card" id="modal-box"></div>
+  </div>
 
 </body>
+
 </html>
