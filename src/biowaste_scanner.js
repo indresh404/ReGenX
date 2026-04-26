@@ -294,53 +294,59 @@ const BioScanner = (() => {
         if (analyBtn) analyBtn.disabled = false;
     }
 
-    // ── Smart Vision Simulation (High-Fidelity Color Analysis) ────────────────
+    // ── Smart Vision Simulation (Robust Color-Ratio Analysis) ────────────────
     function __smartSimulation() {
         const canvas = document.getElementById('bws-canvas');
         const ctx = canvas.getContext('2d');
         const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
-        let r = 0, g = 0, b = 0;
-        let v = 0; // Variance
-        for (let i = 0; i < pixels.length; i += 40) { 
-            r += pixels[i]; g += pixels[i + 1]; b += pixels[i + 2];
-            v += Math.abs(pixels[i] - pixels[i+1]) + Math.abs(pixels[i+1] - pixels[i+2]);
+        let r = 0, g = 0, b = 0, br = 0;
+        let v = 0; 
+        const step = 40;
+        for (let i = 0; i < pixels.length; i += step) { 
+            const pr = pixels[i], pg = pixels[i+1], pb = pixels[i+2];
+            r += pr; g += pg; b += pb;
+            br += (pr + pg + pb) / 3;
+            v += Math.abs(pr - pg) + Math.abs(pg - pb);
         }
-        const count = pixels.length / 40;
-        r /= count; g /= count; b /= count; v /= count;
+        const count = pixels.length / step;
+        r /= count; g /= count; b /= count; br /= count; v /= count;
 
-        // ORGANIC: Greenish, Earthy Brown, Dull Yellow, or Muted Reds
-        const isGreen = (g > r + 5 && g > b);
-        const isBrown = (r > g && g > b && r < 180 && g > 60); // Earthy tones
-        const isYellow = (r > 130 && g > 130 && b < 100); // Fruit/Peels
+        // 1. Calculate Ratios (Relative Balance)
+        const gRatio = g / (r + b + 1);
+        const rRatio = r / (g + b + 1);
+        const bRatio = b / (r + g + 1);
+
+        // 2. Identify "Artificial" signals (High Blue or High Contrast Patterns)
+        const isHighlyArtificial = (bRatio > 0.45) || (v > 100); 
+        const isSmoothSynthetic = (br > 220 && v < 30); // Very bright, very smooth (white plastic)
+
+        // 3. Identify Organic signals (Earthy/Green dominance)
+        const isOrganicDominant = (gRatio > 0.35) || (rRatio > 0.38 && gRatio > 0.3); // Greens or Oranges/Browns
         
-        // INORGANIC: Very Blue, Very Bright White, or High Saturated Artificial Colors
-        const isBlue = (b > r + 15 && b > g);
-        const isWhite = (r > 200 && g > 200 && b > 200);
-        const isArtificial = (v > 60); // High color variance often means packaging
-
         let detectedItems = [];
-        let score = 95;
+        let score = 85; 
 
-        if (isGreen || isBrown || isYellow) {
-            const organicName = isGreen ? 'Leafy Greens' : isBrown ? 'Compostable Organic' : 'Fruit & Veg Scraps';
-            detectedItems = [{ name: organicName, category: 'Organic', isContaminant: false, emoji: '🍃' }];
-            
-            // If it's organic but also shows artificial/bright signs, add a contaminant
-            if (isBlue || isWhite || isArtificial) { 
-                detectedItems.push({ name: 'Plastic Fragment', category: 'Plastic', isContaminant: true, emoji: '🥤' }); 
-                score = 68; 
-            }
-        } else if (isBlue || isWhite || isArtificial) {
+        // BIAS: Assume Organic unless proven otherwise
+        if (!isHighlyArtificial && !isSmoothSynthetic) {
+            // ORGANIC PATH
+            const name = (gRatio > rRatio) ? 'Leafy Organic Waste' : 'Food & Veg Scraps';
+            detectedItems = [{ name, category: 'Organic', isContaminant: false, emoji: '🍃' }];
+            score = (gRatio > 0.4) ? 98 : 92;
+        } else if (isOrganicDominant) {
+            // MIXED PATH (Looks organic but has plastic signals)
             detectedItems = [
-                { name: isBlue ? 'Plastic Packaging' : 'Synthetic Waste', category: 'Inorganic', isContaminant: true, emoji: '📦' },
-                { name: 'Non-Compostable', category: 'Dry Waste', isContaminant: true, emoji: '🗑️' }
+                { name: 'Organic Waste', category: 'Organic', isContaminant: false, emoji: '🍂' },
+                { name: 'Plastic Contaminant', category: 'Plastic', isContaminant: true, emoji: '🥤' }
             ];
-            score = 25;
+            score = 62;
         } else {
-            // Default to mixed but leaning organic if colors are muted/dark
-            detectedItems = [{ name: 'Mixed Organic Matter', category: 'Organic', isContaminant: false, emoji: '🍂' }];
-            score = 82;
+            // INORGANIC PATH (Strong signals of plastic/metal)
+            detectedItems = [
+                { name: 'Non-Organic Material', category: 'Inorganic', isContaminant: true, emoji: '📦' },
+                { name: 'Dry Waste', category: 'Recyclable', isContaminant: true, emoji: '♻️' }
+            ];
+            score = 28;
         }
 
         const grade = score > 90 ? 'Excellent' : score > 75 ? 'Good' : score > 50 ? 'Fair' : 'Poor';
@@ -348,11 +354,11 @@ const BioScanner = (() => {
         return {
             segregationScore: score,
             overallGrade: grade,
-            gradeSummary: score > 80 ? "Healthy organic batch identified." : "Contamination detected in organic flow.",
+            gradeSummary: score > 80 ? "Detected high-quality organic material." : "Detected significant non-organic presence.",
             detectedItems,
-            recommendations: score < 80 ? [{ icon: '🧤', text: 'Please remove synthetics before disposal.' }] : [{ icon: '✨', text: 'Perfectly sorted. Keep it up!' }],
-            biogasSuitability: score > 85 ? 'Ideal' : score > 60 ? 'Acceptable' : 'Reject',
-            estimatedOrganicPercent: Math.max(10, score + 5),
+            recommendations: score < 80 ? [{ icon: '🧤', text: 'Please remove non-organic fragments.' }] : [{ icon: '✨', text: 'Clean batch ready for biogas processing.' }],
+            biogasSuitability: score > 80 ? 'Ideal' : score > 50 ? 'Acceptable' : 'Reject',
+            estimatedOrganicPercent: Math.min(100, score + 10),
             actionRequired: score < 80
         };
     }
