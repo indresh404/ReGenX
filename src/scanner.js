@@ -232,31 +232,40 @@ const BioScanner = (() => {
       
       const entropy = totalVar / count; // Texture noise
       const greenRatio = g / (r + 1);
-      const isSkin = (r > 120 && r > g && r > b && (r-g) > 20 && entropy < 15); // Stricter skin check
-      const isBlank = (entropy < 8 && (r+g+b)/3 > 180); // Only blank if extremely smooth and bright white
+      
+      // IMPROVED GUARD: High entropy (complexity) means it's likely physical waste (wires/scraps), NOT a human face.
+      const isSkin = (r > 125 && r > g && r > b && (r-g) > 20 && entropy < 12); 
+      const isBlank = (entropy < 6 && (r+g+b)/3 > 200); 
 
       if (isSkin || isBlank) {
         __displayInvalidInput(isSkin ? "Human Entity Detected" : "Blank/Uniform Surface Detected");
       } else {
-        const score = Math.floor(Math.min(100, (greenRatio * 40) + (entropy * 0.5) + 20));
+        // Calculate score based on organic signature (greenness) and texture
+        let score = Math.floor((greenRatio * 35) + (entropy * 0.4) + 15);
+        
+        // Penalize "Electric/Inorganic" signatures (low green, high contrast)
+        const isLikelyInorganic = greenRatio < 0.95;
+        if (isLikelyInorganic) score = Math.max(10, score - 30); 
+
         const res = {
            invalidInput: false,
-           segregationScore: score,
-           overallGrade: score > 85 ? 'Excellent' : (score > 60 ? 'Good' : 'Fair'),
-           gradeSummary: `Spectral sensor detected ${entropy > 25 ? 'High' : 'Moderate'} material density with ${greenRatio > 1.1 ? 'Strong' : 'Nominal'} bio-signatures.`,
-           detectedItems: [
-              { name: "Organic Biomass", category: "Organic", emoji: "🌱" },
-              { name: "Fibrous Waste", category: "Mixed", emoji: "📦" }
-           ],
-           biogasSuitability: score > 70 ? 'Ideal' : 'Acceptable',
-           estimatedOrganicPercent: Math.floor(score * 0.95),
+           segregationScore: Math.min(100, score),
+           overallGrade: score > 80 ? 'Excellent' : (score > 45 ? 'Good' : 'Rejected'),
+           gradeSummary: isLikelyInorganic 
+              ? "Inorganic material detected. Not suitable for Biogas conversion."
+              : `Spectral sensor detected ${entropy > 25 ? 'High' : 'Moderate'} material density.`,
+           detectedItems: isLikelyInorganic 
+              ? [{ name: "Inorganic Waste", category: "Mixed", emoji: "⚙️" }]
+              : [{ name: "Organic Biomass", category: "Organic", emoji: "🌱" }],
+           biogasSuitability: score > 60 ? 'Ideal' : 'Reject',
+           estimatedOrganicPercent: isLikelyInorganic ? Math.floor(score/2) : Math.floor(score * 0.95),
            iotTelemetry: { vibrance: Math.floor(greenRatio * 100), entropy: Math.floor(entropy) }
         };
         __displayResult(res);
         __saveToHistory(res);
       }
       if (analyBtn) analyBtn.disabled = false;
-    }, 6000);
+    }, 5000);
   }
 
   function __displayInvalidInput(reason) {
