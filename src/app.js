@@ -928,19 +928,56 @@ function greedyTSP(matrix, startIdx) {
   return order;
 }
 
-async function aiOptimizeJobs(riderLat, riderLng, jobs) {
-  if (jobs.length <= 1) return { jobs, savings_min: 0 };
-  const pts = [{ lat: riderLat, lng: riderLng }, ...jobs.map(j => ({ lat: j.providerLat, lng: j.providerLng }))];
-  const matrix = await fetchOSRMDurationMatrix(pts);
-  if (!matrix) return { jobs, savings_min: 0 };
+// Always-available Haversine TSP (zero API dependency)
+function haversineTSP(riderLat, riderLng, jobs) {
+  if (jobs.length <= 1) return { jobs, savings_km: 0 };
   const n = jobs.length;
-  const sub = Array.from({length: n}, (_, i) => Array.from({length: n}, (_, j) => matrix[i+1][j+1]));
-  const riderRow = matrix[0].slice(1);
-  const firstPick = riderRow.reduce((bi, t, i) => t < riderRow[bi] ? i : bi, 0);
-  const naiveTime = jobs.reduce((s, _, i) => s + (i > 0 ? sub[i-1][i] : (riderRow[0]||0)), 0);
-  const orderIdx = greedyTSP(sub, firstPick);
-  const optTime = orderIdx.reduce((s, idx, step) => s + (step === 0 ? (matrix[0][idx+1]||0) : (sub[orderIdx[step-1]][idx]||0)), 0);
-  return { jobs: orderIdx.map(i => jobs[i]), savings_min: Math.max(0, Math.round((naiveTime - optTime) / 60)) };
+  // Build NxN distance matrix between pickups
+  const mat = Array.from({length: n}, (_, i) =>
+    Array.from({length: n}, (_, j) =>
+      distanceKm(jobs[i].providerLat, jobs[i].providerLng, jobs[j].providerLat, jobs[j].providerLng)
+    )
+  );
+  // Distance from rider to each pickup
+  const rDist = jobs.map(j => distanceKm(riderLat, riderLng, j.providerLat, j.providerLng));
+  const firstPick = rDist.reduce((bi, d, i) => d < rDist[bi] ? i : bi, 0);
+
+  // Naive total (visit in original order)
+  const naiveDist = jobs.reduce((s, _, i) => s + (i > 0 ? mat[i-1][i] : rDist[0]), 0);
+
+  // Greedy TSP from nearest first pickup
+  const orderIdx = greedyTSP(mat, firstPick);
+  const optDist   = orderIdx.reduce((s, idx, step) => s + (step === 0 ? rDist[idx] : mat[orderIdx[step-1]][idx]), 0);
+
+  return {
+    jobs: orderIdx.map(i => jobs[i]),
+    savings_km: Math.max(0, parseFloat((naiveDist - optDist).toFixed(2)))
+  };
+}
+
+async function aiOptimizeJobs(riderLat, riderLng, jobs) {
+  // Phase 1: Haversine TSP — always works, instant result
+  const hv = haversineTSP(riderLat, riderLng, jobs);
+  if (jobs.length <= 1) return { jobs, savings_min: 0, source: 'none' };
+
+  // Phase 2: Try OSRM duration matrix for more accurate road-time TSP
+  try {
+    const pts = [{ lat: riderLat, lng: riderLng }, ...jobs.map(j => ({ lat: j.providerLat, lng: j.providerLng }))];
+    const matrix = await fetchOSRMDurationMatrix(pts);
+    if (matrix) {
+      const n = jobs.length;
+      const sub = Array.from({length: n}, (_, i) => Array.from({length: n}, (_, j) => matrix[i+1][j+1]));
+      const riderRow = matrix[0].slice(1);
+      const firstPick = riderRow.reduce((bi, t, i) => t < riderRow[bi] ? i : bi, 0);
+      const naiveTime = jobs.reduce((s, _, i) => s + (i > 0 ? sub[i-1][i] : (riderRow[0]||0)), 0);
+      const orderIdx  = greedyTSP(sub, firstPick);
+      const optTime   = orderIdx.reduce((s, idx, step) => s + (step === 0 ? (matrix[0][idx+1]||0) : (sub[orderIdx[step-1]][idx]||0)), 0);
+      return { jobs: orderIdx.map(i => jobs[i]), savings_min: Math.max(0, Math.round((naiveTime - optTime) / 60)), source: 'osrm' };
+    }
+  } catch { /* OSRM unavailable, fall through */ }
+
+  // Fallback: return Haversine TSP result
+  return { jobs: hv.jobs, savings_min: 0, savings_km: hv.savings_km, source: 'haversine' };
 }
 
 // ════════ RIDER LOGIC ════════
@@ -1010,7 +1047,7 @@ async function renderRider(mc, fullRender) {
       `).join('');
     }
     
-    // ── Real OSRM Road Routing ──
+    // ── Real OSRM Road Routing (with Haversine TSP fallback) ──
     setTimeout(async () => {
       if (!document.getElementById('rider-map')) return;
       if (rMap) { rMap.remove(); rMap = null; }
@@ -1028,10 +1065,9 @@ async function renderRider(mc, fullRender) {
       });
 
       if (activeJobs.length) {
-        // 1. AI-optimize pickup order via OSRM duration matrix + greedy TSP
-        const { jobs: optimizedJobs, savings_min } = await aiOptimizeJobs(SESSION.lat, SESSION.lng, activeJobs);
+        // PHASE 1: Haversine TSP — instant, always works
+        const { jobs: optimizedJobs, savings_min, savings_km, source } = await aiOptimizeJobs(SESSION.lat, SESSION.lng, activeJobs);
 
-        // 2. Build waypoints: rider → optimized pickups → plant
         const plant = DB.get('acc:' + optimizedJobs[0].plantId);
         const waypoints = [
           { lat: SESSION.lat, lng: SESSION.lng },
@@ -1039,21 +1075,15 @@ async function renderRider(mc, fullRender) {
           ...(plant ? [{ lat: plant.lat, lng: plant.lng }] : [])
         ];
 
-        // 3. Fetch real road route from OSRM
-        const route = await fetchOSRMRoute(waypoints);
-
-        // 4. Numbered pickup markers
+        // Draw numbered pickup markers in TSP order immediately
         optimizedJobs.forEach((job, i) => {
           const ico = L.divIcon({
-            html: `<div style="width:28px;height:28px;background:#F59E0B;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:white;box-shadow:0 2px 8px rgba(0,0,0,0.4);">${i + 1}</div>`,
+            html: `<div style="width:28px;height:28px;background:#F59E0B;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:white;box-shadow:0 2px 8px rgba(0,0,0,0.4);">${i+1}</div>`,
             className: '', iconAnchor: [14, 14]
           });
-          const leg = route && route.legs[i];
           L.marker([job.providerLat, job.providerLng], { icon: ico }).addTo(rMap)
-            .bindPopup(`<b>Stop ${i + 1}: ${job.providerOrg}</b><br>${job.kg}kg ${job.wasteType}${leg ? `<br>⏱ ~${leg.duration_min} min · ${leg.distance_km} km` : ''}`);
+            .bindPopup(`<b>Stop ${i+1}: ${job.providerOrg}</b><br>${job.kg}kg ${job.wasteType}`);
         });
-
-        // Plant marker
         if (plant) {
           const pltIco = L.divIcon({
             html: `<div style="width:32px;height:32px;background:#0D9488;border-radius:8px;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,0.4);">🏭</div>`,
@@ -1062,35 +1092,73 @@ async function renderRider(mc, fullRender) {
           L.marker([plant.lat, plant.lng], { icon: pltIco }).addTo(rMap).bindPopup(`<b>Plant:</b> ${plant.org}`);
         }
 
-        // 5. Draw real road route OR fallback to straight polyline
-        if (route) {
-          // Glow underlay + main route
-          L.geoJSON(route.geojson, { style: { color: '#34D399', weight: 9, opacity: 0.25, lineJoin: 'round' } }).addTo(rMap);
-          const routeLayer = L.geoJSON(route.geojson, { style: { color: '#0D9488', weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round' } }).addTo(rMap);
-          rMap.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+        // Draw TSP-ordered path immediately (dashed, shows correct stop sequence)
+        const latlngs = waypoints.map(w => [w.lat, w.lng]);
+        let pathLayer = L.polyline(latlngs, { color: '#0D9488', weight: 4, opacity: 0.65, dashArray: '10,6', lineJoin: 'round' }).addTo(rMap);
+        rMap.fitBounds(pathLayer.getBounds(), { padding: [50, 50] });
 
-          // Update telemetry with REAL values
-          const distEl = document.getElementById('rt-total-dist');
-          const etaEl  = document.getElementById('rt-eta');
-          const fuelEl = document.getElementById('rt-fuel-saved');
-          if (distEl) { distEl.textContent = route.distance_km + ' km'; distEl.style.color = 'var(--text)'; }
-          if (etaEl)  { etaEl.textContent  = route.duration_min + ' min'; etaEl.style.color = 'var(--blue)'; }
-          if (fuelEl) { const saved = (parseFloat(route.distance_km) * 0.08).toFixed(2); fuelEl.textContent = saved + ' L'; fuelEl.style.color = 'var(--green)'; }
+        // Haversine total distance estimate
+        const hvDist = waypoints.reduce((sum, wp, i) => i === 0 ? 0 : sum + distanceKm(waypoints[i-1].lat, waypoints[i-1].lng, wp.lat, wp.lng), 0);
+        const hvETA  = Math.round(hvDist / 0.25); // ~15 km/h avg speed
 
-          // Update summary panel
-          const summaryEl = document.getElementById('rd-route-summary');
-          if (summaryEl) {
-            const stopsHtml = optimizedJobs.map((j, i) => {
-              const leg = route.legs[i];
-              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border);">
+        const distEl    = document.getElementById('rt-total-dist');
+        const etaEl     = document.getElementById('rt-eta');
+        const fuelEl    = document.getElementById('rt-fuel-saved');
+        const summaryEl = document.getElementById('rd-route-summary');
+
+        if (distEl) { distEl.textContent = hvDist.toFixed(1) + ' km'; distEl.style.color = 'var(--text)'; }
+        if (etaEl)  { etaEl.textContent  = hvETA + ' min (est.)'; etaEl.style.color = 'var(--blue)'; }
+        if (fuelEl) { fuelEl.textContent = (hvDist * 0.08).toFixed(2) + ' L'; fuelEl.style.color = 'var(--green)'; }
+
+        const savingsLabel = savings_min > 0 ? ` · Saved ${savings_min} min vs naive`
+          : savings_km > 0 ? ` · Saved ${savings_km} km vs naive` : '';
+        if (summaryEl) {
+          summaryEl.innerHTML = `
+            <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-hover);margin-bottom:12px;">
+              🤖 TSP Optimized Stop Sequence${savingsLabel}
+              <span style="font-size:10px;font-weight:500;color:var(--text-muted);margin-left:6px;">(${source === 'osrm' ? 'OSRM road-times' : 'Haversine distance'})</span>
+            </div>
+            ${optimizedJobs.map((j, i) => `
+              <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border);">
                 <div style="width:22px;height:22px;background:var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:white;flex-shrink:0;">${i+1}</div>
                 <div style="flex:1;font-size:13px;font-weight:600;">${j.providerOrg}</div>
-                ${leg ? `<div style="font-size:11px;color:var(--text-muted);">${leg.duration_min}min · ${leg.distance_km}km</div>` : ''}
-              </div>`;
-            }).join('');
+                <div style="font-size:11px;color:var(--text-muted);">${distanceKm(i===0?SESSION.lat:optimizedJobs[i-1].providerLat, i===0?SESSION.lng:optimizedJobs[i-1].providerLng, j.providerLat, j.providerLng).toFixed(1)}km</div>
+              </div>`).join('')}
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;">
+              <div style="width:22px;height:22px;background:var(--green);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;">🏭</div>
+              <div style="flex:1;font-size:13px;font-weight:600;">${plant ? plant.org : 'Plant'}</div>
+            </div>
+          `;
+        }
+        showToast(`🤖 TSP Order ready (${source}). Fetching road route…`);
+
+        // PHASE 2: Try OSRM for real road geometry (async enhancement)
+        const route = await fetchOSRMRoute(waypoints);
+        if (route) {
+          rMap.removeLayer(pathLayer); // replace dashed with real roads
+          L.geoJSON(route.geojson, { style: { color: '#34D399', weight: 9, opacity: 0.2, lineJoin: 'round' } }).addTo(rMap);
+          pathLayer = L.geoJSON(route.geojson, { style: { color: '#0D9488', weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round' } }).addTo(rMap);
+          rMap.fitBounds(pathLayer.getBounds(), { padding: [50, 50] });
+
+          // Upgrade telemetry with real OSRM values
+          if (distEl) { distEl.textContent = route.distance_km + ' km'; distEl.style.color = 'var(--green)'; }
+          if (etaEl)  { etaEl.textContent  = route.duration_min + ' min'; etaEl.style.color = 'var(--blue)'; }
+          if (fuelEl) { fuelEl.textContent = (parseFloat(route.distance_km) * 0.08).toFixed(2) + ' L'; }
+
+          // Upgrade stop list with real per-leg times from OSRM
+          if (summaryEl) {
             summaryEl.innerHTML = `
-              <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-hover);margin-bottom:12px;">🤖 AI Optimized Route${savings_min > 0 ? ` · Saved ${savings_min} min vs naive order` : ''}</div>
-              ${stopsHtml}
+              <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-hover);margin-bottom:12px;">
+                🤖 TSP Optimized · Real Road Route${savingsLabel}
+              </div>
+              ${optimizedJobs.map((j, i) => {
+                const leg = route.legs[i];
+                return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border);">
+                  <div style="width:22px;height:22px;background:var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:white;flex-shrink:0;">${i+1}</div>
+                  <div style="flex:1;font-size:13px;font-weight:600;">${j.providerOrg}</div>
+                  ${leg ? `<div style="font-size:11px;color:var(--text-muted);">${leg.duration_min}min · ${leg.distance_km}km</div>` : ''}
+                </div>`;
+              }).join('')}
               <div style="display:flex;align-items:center;gap:10px;padding:8px 0;">
                 <div style="width:22px;height:22px;background:var(--green);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;">🏭</div>
                 <div style="flex:1;font-size:13px;font-weight:600;">${plant ? plant.org : 'Plant'}</div>
@@ -1098,16 +1166,7 @@ async function renderRider(mc, fullRender) {
               </div>
             `;
           }
-          showToast(`🛰️ OSRM Route: ${route.distance_km}km · ETA ${route.duration_min}min`);
-        } else {
-          // OSRM unreachable — fallback straight polyline
-          const latlngs = waypoints.map(w => [w.lat, w.lng]);
-          const poly = L.polyline(latlngs, { color: 'var(--amber)', weight: 4, opacity: 0.6, dashArray: '10,10' }).addTo(rMap);
-          rMap.fitBounds(poly.getBounds(), { padding: [50, 50] });
-          const summaryEl = document.getElementById('rd-route-summary');
-          if (summaryEl) summaryEl.innerHTML = '<div style="font-size:12px;color:var(--amber);">⚠️ Could not reach routing server. Showing straight-line estimate.</div>';
-          const dist = distanceKm(SESSION.lat, SESSION.lng, optimizedJobs[0].providerLat, optimizedJobs[0].providerLng);
-          showToast(`📍 Estimated ${dist.toFixed(2)}km to first pickup.`);
+          showToast(`🛰️ OSRM Route: ${route.distance_km}km · ${route.duration_min}min`);
         }
       }
     }, 100);
