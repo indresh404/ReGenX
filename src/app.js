@@ -1,6 +1,7 @@
 // ══════════════════════════════════════
 // ReGenX v3 — Unified Premium Logic
 // ══════════════════════════════════════
+import { Intelligence } from './intelligence.js';
 
 const STORAGE_KEY_PREFIX = "regenx-v3:";
 
@@ -351,7 +352,17 @@ function executeLogin(acc) {
   const tokenContainer = document.getElementById('token-balance-container');
   if (acc.role === 'provider') {
     tokenContainer.classList.remove('hidden');
-    document.getElementById('token-balance').textContent = acc.tokens || 0;
+    // GSAP Animation for Token Balance
+    const targetTokens = acc.tokens || 0;
+    const countObj = { val: 0 };
+    gsap.to(countObj, {
+      val: targetTokens,
+      duration: 2,
+      ease: "power2.out",
+      onUpdate: () => {
+        document.getElementById('token-balance').textContent = Math.floor(countObj.val);
+      }
+    });
   } else {
     tokenContainer.classList.add('hidden');
   }
@@ -542,23 +553,17 @@ async function refreshCurrentView(fullRender = false) {
         </div>
       </div>
 
-      <h3 class="heading" style="margin-bottom:16px;">Web3 NFT Assets</h3>
+      <h3 class="heading" style="margin-bottom:16px;">Web3 NFT Assets & Utilities</h3>
       <div class="market-grid">
-         <div class="market-card">
-           <div class="mc-icon">📜</div><div class="mc-title">CSR Certificate NFT</div>
-           <div class="mc-price">5,000 $RGX</div>
-           <button class="btn btn-primary btn-full" onclick="buyMarketItem(5000, 'CSR Certificate NFT')">Mint to Blockchain</button>
-         </div>
-         <div class="market-card">
-           <div class="mc-icon">🗑️</div><div class="mc-title">Smart Bin Hardware</div>
-           <div class="mc-price">10,000 $RGX</div>
-           <button class="btn btn-primary btn-full" onclick="buyMarketItem(10000, 'Smart Bin Sensor')">Claim Physical Asset</button>
-         </div>
-         <div class="market-card">
-           <div class="mc-icon">⚡</div><div class="mc-title">Energy Rebate Voucher</div>
-           <div class="mc-price">25,000 $RGX</div>
-           <button class="btn btn-primary btn-full" onclick="buyMarketItem(25000, 'Energy Rebate Voucher')">Mint Voucher</button>
-         </div>
+         ${Intelligence.MARKETPLACE_ITEMS.map(item => `
+          <div class="market-card glass-card">
+            <div class="mc-icon">${item.icon}</div>
+            <div class="mc-title">${item.name}</div>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">${item.description}</p>
+            <div class="mc-price">${item.price} $RGX</div>
+            <button class="btn btn-primary btn-full" onclick="buyMarketItem(${item.price}, '${item.name}')">Mint Asset</button>
+          </div>
+         `).join('')}
       </div>
     `;
     return;
@@ -626,9 +631,9 @@ async function renderProvider(mc, fullRender) {
           </div>
 
           <div class="glass-card sensor-card" style="margin-top:24px; padding:16px;">
-            <div class="ai-badge">✨ AI Predicts</div>
-            <h4 style="margin-bottom:4px;" id="pv-ai-predict">0kg Expected Tomorrow</h4>
-            <p style="font-size:13px; color:var(--text-muted);">Based on your recent historical completion data.</p>
+            <div class="ai-badge">✨ Intelligence Engine</div>
+            <h4 style="margin-bottom:4px;" id="pv-ai-predict">Analyzing patterns...</h4>
+            <p style="font-size:13px; color:var(--text-muted);" id="pv-ai-trend">History-based forecasting active.</p>
           </div>
 
           <h3 class="heading" style="margin-top:24px; margin-bottom:16px;">Regional Leaderboard</h3>
@@ -662,12 +667,14 @@ async function renderProvider(mc, fullRender) {
     const lbDiv = document.getElementById('pv-leaderboard');
     if(lbDiv) lbDiv.innerHTML = lbHTML;
     
-    // Predict next day = average of all time (simple logic)
-    const myTotal = lbMap[SESSION.id] || 0;
-    const myComps = completed.length;
-    const avg = myComps > 0 ? Math.round(myTotal / myComps) : 0;
+    // Predict next day = AI Intelligence Engine
+    const prediction = Intelligence.predictWasteVolume(completed);
     const aiPredict = document.getElementById('pv-ai-predict');
-    if(aiPredict) aiPredict.textContent = avg + "kg Expected Tomorrow";
+    if(aiPredict) {
+      aiPredict.textContent = `${prediction.expectedKg}kg ${prediction.trend === 'Upward' ? '📈' : '📉'}`;
+      const trendEl = document.getElementById('pv-ai-trend');
+      if(trendEl) trendEl.textContent = `Trend: ${prediction.trend} | Confidence: ${prediction.confidence}`;
+    }
     const totalKg = completed.reduce((s,o)=>s+(o.actualKg||o.kg),0);
     const statsDiv = document.getElementById('pv-stats');
     if(statsDiv) {
@@ -1141,6 +1148,20 @@ async function renderRider(mc, fullRender) {
         const latlngs = waypoints.map(w => [w.lat, w.lng]);
         let pathLayer = L.polyline(latlngs, { color: '#0D9488', weight: 4, opacity: 0.65, dashArray: '10,6', lineJoin: 'round' }).addTo(rMap);
         rMap.fitBounds(pathLayer.getBounds(), { padding: [50, 50] });
+
+        // INTELLIGENCE ENHANCEMENT: High Demand Heatmap
+        const allAccs = DB.list('acc:').map(k => DB.get(k));
+        const providers = allAccs.filter(a => a.role === 'provider');
+        const demandZones = Intelligence.getHighDemandZones(providers, orders);
+        
+        demandZones.forEach(zone => {
+           L.circle([zone.lat, zone.lng], {
+              color: 'transparent',
+              fillColor: '#EF4444',
+              fillOpacity: zone.intensity * 0.4,
+              radius: 800
+           }).addTo(rMap).bindPopup(`<b>High Demand Area</b><br>${zone.reason}`);
+        });
 
         // Haversine total distance estimate
         const hvDist = waypoints.reduce((sum, wp, i) => i === 0 ? 0 : sum + distanceKm(waypoints[i-1].lat, waypoints[i-1].lng, wp.lat, wp.lng), 0);
