@@ -1657,8 +1657,6 @@ function startIoTSim() {
     let changed = false;
     bins.forEach(b => {
       if (b.status === 'offline') return;
-      const prevBin = { ...b };
-      
       // Advance fill by rate ± small noise, clamp 0-100
       const delta = (b.rate || 0.5) + (Math.random() - 0.4) * 0.3;
       b.fill = Math.min(100, Math.max(0, parseFloat((b.fill + delta).toFixed(1))));
@@ -1668,28 +1666,6 @@ function startIoTSim() {
       b.humidity = parseFloat((55 + Math.random() * 20).toFixed(1));
       b.methane = parseFloat((Math.random() * 5).toFixed(2));
       changed = true;
-
-      // Anomaly Detection via IoTBridge
-      const anomalies = IoTBridge.detectAnomalies(b, prevBin);
-      if (anomalies.length > 0 && currentView === 'v-iot-bins') {
-         anomalies.forEach(a => showToast(a));
-      }
-
-      // Auto-dispatch hook
-      if (IoTBridge.shouldAutoDispatch(b) && !b.dispatchPending) {
-         b.dispatchPending = true;
-         // Create auto order
-         saveOrder({
-             id: uid(), ts: Date.now(),
-             providerId: SESSION.id, providerOrg: SESSION.org,
-             providerLat: SESSION.lat, providerLng: SESSION.lng,
-             wasteType: 'Mixed kitchen waste', kg: Math.round(b.fill * 1.5), shift: 'Morning Shift (08:00 - 12:00)',
-             plantId: 'mock-plant-1', plantName: 'Established Plant',
-             status: 'requested'
-         });
-         showToast(`🚀 Auto-Dispatch triggered for bin: ${b.name}`);
-      }
-      if (b.fill < 50) b.dispatchPending = false; // reset
     });
     if (changed) {
       saveIoTBins(bins);
