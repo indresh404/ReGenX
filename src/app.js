@@ -1,6 +1,7 @@
 // ══════════════════════════════════════
 // ReGenX v3 — Unified Premium Logic
 // ══════════════════════════════════════
+import { VisionScanner } from './vision-scanner.js';
 
 const STORAGE_KEY_PREFIX = "regenx-v3:";
 
@@ -1433,7 +1434,13 @@ window.openPlantConfirm = function(id) {
   const html = `
     <h3 class="modal-title">Intake Assessment</h3>
     <p class="modal-sub">Final confirmation before processing.</p>
-    <div class="form-group"><label class="form-label">Segregation Score (0-100)</label><input type="number" id="p-score" class="form-input"></div>
+    <div class="form-group">
+        <label class="form-label">Segregation Score (0-100)</label>
+        <div style="display:flex; gap:8px;">
+            <input type="number" id="p-score" class="form-input" style="flex:1;">
+            <button class="btn btn-outline-primary" style="white-space:nowrap; border:2px solid var(--blue); color:var(--blue);" onclick="window.VisionScanner.openScanner('p-score')">📸 AI Scan</button>
+        </div>
+    </div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="confirmPlantReceipt('${id}')">Accept Load ✓</button></div>
   `;
   document.getElementById('modal-box').innerHTML = html;
