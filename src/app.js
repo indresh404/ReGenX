@@ -7,12 +7,56 @@ import { YieldOptimizer } from './yield-optimizer.js';
 
 const STORAGE_KEY_PREFIX = "regenx-v3:";
 
-// PWA Service Worker Registration
+// ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('service-worker.js')
-    .then(() => console.log('ReGenX PWA Service Worker Registered'))
+    .then(reg => {
+      console.log('☁️ ReGenX SW v3 Registered');
+      window._swReg = reg;
+
+      // Listen for Background Sync completion messages from SW
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'SYNC_COMPLETE') {
+          window.showToast(event.data.message);
+        }
+        if (event.data?.type === 'NAVIGATE') {
+          window.showView && window.showView('v-r-dash');
+        }
+      });
+    })
     .catch(err => console.log('SW Registration Failed', err));
 }
+
+// ── Push Notification Permission UI ──
+window.requestPushPermission = async function() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted') {
+    window.showToast('✓ Smart Alerts are already enabled!');
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission === 'granted') {
+    window.showToast('🔔 Smart Alerts enabled! You\'ll be notified of new dispatches.');
+    // Register Background Sync on first permission grant
+    if (window._swReg && 'sync' in window._swReg) {
+      window._swReg.sync.register('regenx-order-sync');
+    }
+  } else {
+    window.showToast('⚠️ Notifications blocked. Enable in browser settings.');
+  }
+};
+
+// ── Trigger Background Sync when going offline ──
+window.addEventListener('offline', () => {
+  window.showToast && window.showToast('📶 Offline mode — changes queued for sync.');
+  if (window._swReg && 'sync' in window._swReg) {
+    window._swReg.sync.register('regenx-order-sync');
+  }
+});
+window.addEventListener('online', () => {
+  window.showToast && window.showToast('✅ Back online! Syncing queued data...');
+});
+
 
 // Simulated Localities for default plants (if no GPS)
 const DEFAULT_LOCALITIES = [
@@ -669,7 +713,21 @@ async function renderProvider(mc, fullRender) {
           <div class="glass-card" style="padding:16px;" id="pv-leaderboard">
             <!-- Dynamic Leaderboard -->
           </div>
+
+          <div class="glass-card" style="margin-top:24px; padding:16px; border-color:var(--amber); background:rgba(245,158,11,0.07);">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+              <span style="font-size:22px;">🔔</span>
+              <div>
+                <div style="font-weight:700; font-size:14px;">Smart Dispatch Alerts</div>
+                <div style="font-size:12px; color:var(--text-muted);">Get notified instantly when your dispatch is picked up</div>
+              </div>
+            </div>
+            <button class="btn btn-full" style="background:linear-gradient(135deg,#F59E0B,#D97706); color:#fff; font-weight:700;" onclick="window.requestPushPermission()">
+              🔔 Enable Smart Alerts
+            </button>
+          </div>
         </div>
+
       </div>
     `;
     
