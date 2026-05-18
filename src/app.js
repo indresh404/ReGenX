@@ -4,6 +4,7 @@
 import { Intelligence } from './intelligence.js';
 import { TrustProtocol } from './trust.js';
 import { YieldOptimizer } from './yield-optimizer.js';
+import { RouteOptimizer } from './route-optimizer.js';
 
 const STORAGE_KEY_PREFIX = "regenx-v3:";
 
@@ -1219,10 +1220,12 @@ async function renderRider(mc, fullRender) {
       });
 
       if (activeJobs.length) {
-        // PHASE 1: Haversine TSP — instant, always works
-        const { jobs: optimizedJobs, savings_min, savings_km, source } = await aiOptimizeJobs(SESSION.lat, SESSION.lng, activeJobs);
+        // AI Multi-Stop Route Optimization (Greedy + 2-Opt)
+        const result = RouteOptimizer.optimizeRoute(SESSION, activeJobs);
+        const optimizedJobs = result.optimizedJobs;
 
-        const plant = DB.get('acc:' + optimizedJobs[0].plantId);
+        const plantId = optimizedJobs.length > 0 ? optimizedJobs[0].plantId : null;
+        const plant = plantId ? DB.get('acc:' + plantId) : null;
         const waypoints = [
           { lat: SESSION.lat, lng: SESSION.lng },
           ...optimizedJobs.map(j => ({ lat: j.providerLat, lng: j.providerLng })),
@@ -1246,9 +1249,10 @@ async function renderRider(mc, fullRender) {
           L.marker([plant.lat, plant.lng], { icon: pltIco }).addTo(rMap).bindPopup(`<b>Plant:</b> ${plant.org}`);
         }
 
-        // Draw TSP-ordered path immediately (dashed, shows correct stop sequence)
+        // Draw TSP-ordered path immediately (glowing glassmorphism neon route flow)
         const latlngs = waypoints.map(w => [w.lat, w.lng]);
-        let pathLayer = L.polyline(latlngs, { color: '#0D9488', weight: 4, opacity: 0.65, dashArray: '10,6', lineJoin: 'round' }).addTo(rMap);
+        L.polyline(latlngs, { color: '#38BDF8', weight: 8, opacity: 0.3, lineJoin: 'round' }).addTo(rMap);
+        let pathLayer = L.polyline(latlngs, { color: '#0D9488', weight: 4, opacity: 0.9, dashArray: '8, 8', lineJoin: 'round' }).addTo(rMap);
         rMap.fitBounds(pathLayer.getBounds(), { padding: [50, 50] });
 
         // INTELLIGENCE ENHANCEMENT: High Demand Heatmap
@@ -1266,7 +1270,7 @@ async function renderRider(mc, fullRender) {
         });
 
         // Haversine total distance estimate
-        const hvDist = waypoints.reduce((sum, wp, i) => i === 0 ? 0 : sum + distanceKm(waypoints[i-1].lat, waypoints[i-1].lng, wp.lat, wp.lng), 0);
+        const hvDist = waypoints.reduce((sum, wp, i) => i === 0 ? 0 : sum + RouteOptimizer.calculateDistance(waypoints[i-1].lat, waypoints[i-1].lng, wp.lat, wp.lng), 0);
         const hvETA  = Math.round(hvDist / 0.25); // ~15 km/h avg speed
 
         const distEl    = document.getElementById('rt-total-dist');
@@ -1276,21 +1280,20 @@ async function renderRider(mc, fullRender) {
 
         if (distEl) { distEl.textContent = hvDist.toFixed(1) + ' km'; distEl.style.color = 'var(--text)'; }
         if (etaEl)  { etaEl.textContent  = hvETA + ' min (est.)'; etaEl.style.color = 'var(--blue)'; }
-        if (fuelEl) { fuelEl.textContent = (hvDist * 0.08).toFixed(2) + ' L'; fuelEl.style.color = 'var(--green)'; }
+        if (fuelEl) { fuelEl.textContent = (result.savingsKm * 0.08).toFixed(2) + ' L'; fuelEl.style.color = 'var(--green)'; }
 
-        const savingsLabel = savings_min > 0 ? ` · Saved ${savings_min} min vs naive`
-          : savings_km > 0 ? ` · Saved ${savings_km} km vs naive` : '';
+        const savingsLabel = result.savingsKm > 0 ? ` · Saved ${result.savingsKm} km via 2-Opt AI` : '';
         if (summaryEl) {
           summaryEl.innerHTML = `
             <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-hover);margin-bottom:12px;">
-              🤖 TSP Optimized Stop Sequence${savingsLabel}
-              <span style="font-size:10px;font-weight:500;color:var(--text-muted);margin-left:6px;">(${source === 'osrm' ? 'OSRM road-times' : 'Haversine distance'})</span>
+              🤖 AI TSP 2-Opt Optimized Sequence${savingsLabel}
+              <span style="font-size:10px;font-weight:500;color:var(--text-muted);margin-left:6px;">(Dynamic Load Factor Routing)</span>
             </div>
             ${optimizedJobs.map((j, i) => `
               <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border);">
                 <div style="width:22px;height:22px;background:var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:white;flex-shrink:0;">${i+1}</div>
                 <div style="flex:1;font-size:13px;font-weight:600;">${j.providerOrg}</div>
-                <div style="font-size:11px;color:var(--text-muted);">${distanceKm(i===0?SESSION.lat:optimizedJobs[i-1].providerLat, i===0?SESSION.lng:optimizedJobs[i-1].providerLng, j.providerLat, j.providerLng).toFixed(1)}km</div>
+                <div style="font-size:11px;color:var(--text-muted);">${RouteOptimizer.calculateDistance(i===0?SESSION.lat:optimizedJobs[i-1].providerLat, i===0?SESSION.lng:optimizedJobs[i-1].providerLng, j.providerLat, j.providerLng).toFixed(1)}km</div>
               </div>`).join('')}
             <div style="display:flex;align-items:center;gap:10px;padding:8px 0;">
               <div style="width:22px;height:22px;background:var(--green);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;">🏭</div>
