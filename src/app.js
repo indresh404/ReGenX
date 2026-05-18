@@ -1832,7 +1832,5 @@ window.iotDispatchFromBin = function(id) {
 document.getElementById('login-screen').style.display = 'flex';
 switchAuthTab('login');
 
-// Initialize Cloud Sync Engine
-setTimeout(() => {
-    if (window.CloudSync) window.CloudSync.init();
-}, 1000);
+// ── Initialize Appwrite Cloud Sync Engine ──
+setTimeout(() => { if (window.CloudSync) window.CloudSync.init(); }, 1000);
