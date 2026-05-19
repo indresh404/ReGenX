@@ -573,6 +573,40 @@ tr:hover td { background: var(--bg); }
 @keyframes bw-pulse { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.3); opacity: 1; } }
 @keyframes bw-scanline { 0% { top: 0%; } 100% { top: 100%; } }
 
+/* AUDIT PORTAL */
+.audit-card { border-color: var(--border); }
+.audit-registry-item {
+  background: var(--surface);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+}
+.audit-registry-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.audit-registry-input:focus { outline: none; }
+.audit-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid var(--green-light);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: audit-spin 0.9s linear infinite;
+}
+.fade-in-up { animation: fadeInUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes audit-spin { 100% { transform: rotate(360deg); } }
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .detected-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 .detected-item { padding: 12px; border-radius: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; transition: all 0.2s; }
 .detected-item:hover { transform: scale(1.02); box-shadow: var(--shadow); border-color: var(--green); }

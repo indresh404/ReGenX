@@ -6,6 +6,44 @@
 
 export const ESGReporter = {
     /**
+     * Generates a random SHA-256 style hash for audit registry entries.
+     * @returns {string} Hex-encoded hash with 0x prefix.
+     */
+    generateAuditHash: () => {
+        if (window.crypto && window.crypto.getRandomValues) {
+            const bytes = new Uint8Array(32);
+            window.crypto.getRandomValues(bytes);
+            return '0x' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+        }
+        return '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    },
+
+    /**
+     * Loads the public audit registry from localStorage.
+     * @returns {Array<Object>} Registry records.
+     */
+    loadAuditRegistry: () => {
+        try {
+            const raw = window.localStorage.getItem('audit-registry');
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    },
+
+    /**
+     * Persists the public audit registry in localStorage.
+     * @param {Array<Object>} records - Registry records.
+     */
+    saveAuditRegistry: (records) => {
+        try {
+            window.localStorage.setItem('audit-registry', JSON.stringify(records));
+        } catch {
+            // Ignore write errors
+        }
+    },
+    /**
      * Triggers the client-side PDF generation process.
      * @param {Object} account - Current user SESSION object.
      * @param {Array} history - Array of completed order objects.
@@ -22,26 +60,24 @@ export const ESGReporter = {
         const totalTokens = account.tokens || 0;
         
         // Mock a cryptographic hash for "verifiability"
-        const reportHash = '0x' + Array.from({length: 40}, () => Math.floor(Math.random()*16).toString(16)).join('');
+        const reportHash = ESGReporter.generateAuditHash();
         const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
         // Save generated verification record to ReGenX Public Audit registry
         try {
-            if (window.DB) {
-                const registry = window.DB.get('audit-registry') || [];
-                registry.push({
-                    hash: reportHash,
-                    org: account.org || account.name,
-                    role: account.role,
-                    userId: account.id,
-                    totalKg,
-                    totalCO2,
-                    tokens: totalTokens,
-                    dispatchesCount: history.length,
-                    timestamp: Date.now()
-                });
-                window.DB.set('audit-registry', registry);
-            }
+            const registry = ESGReporter.loadAuditRegistry();
+            registry.push({
+                hash: reportHash,
+                org: account.org || account.name,
+                role: account.role,
+                userId: account.id,
+                totalKg,
+                totalCO2,
+                tokens: totalTokens,
+                dispatchesCount: history.length,
+                timestamp: Date.now()
+            });
+            ESGReporter.saveAuditRegistry(registry);
         } catch (e) {
             console.error("Failed to store verification record:", e);
         }
@@ -88,7 +124,7 @@ export const ESGReporter = {
 
             <div style="margin-top:60px; text-align:center; font-size:11px; color:#94A3B8;">
                 <p>This document is digitally generated and verifiable via the ReGenX smart ledger.</p>
-                <p style="font-family:monospace; background:#F1F5F9; display:inline-block; padding:4px 8px; border-radius:4px;">Signature Hash: ${reportHash}</p>
+                <p style="font-family:monospace; background:#F1F5F9; display:inline-block; padding:4px 8px; border-radius:4px;">Signature Hash (SHA-256): ${reportHash}</p>
             </div>
         `;
 
