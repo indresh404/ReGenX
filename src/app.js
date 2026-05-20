@@ -872,6 +872,23 @@ function saveOrder(o) {
 }
 function getAllLogs() { return DB.list('log:').map(k => DB.get(k)).filter(Boolean).sort((a,b)=>b.ts-a.ts); }
 
+function buildStatusStepper(status) {
+  if (status === 'rejected') return '';
+  const steps = [
+    { key: 'requested', label: 'Requested' },
+    { key: 'assigned',  label: 'Assigned'  },
+    { key: 'en_route',  label: 'En Route'  },
+    { key: 'picked_up', label: 'Picked Up' },
+    { key: 'at_plant',  label: 'At Plant'  },
+    { key: 'completed', label: 'Completed' },
+  ];
+  const idx = steps.findIndex(s => s.key === status);
+  return `<div class="order-stepper">${steps.map((s, i) => {
+    const cls = i < idx ? 'done' : i === idx && status !== 'completed' ? 'active' : i <= idx ? 'done' : '';
+    return `<div class="os-step ${cls}"><div class="os-dot"></div><div class="os-label">${s.label}</div></div>`;
+  }).join('')}</div>`;
+}
+
 // Generic Order Card Component
 function buildOrderCard(o, role) {
   const badges = {
@@ -932,6 +949,7 @@ function buildOrderCard(o, role) {
         <div class="oc-meta-item">🕒 ${o.shift}</div>
         <div class="oc-meta-item">⚗️ Dest: ${o.plantName}</div>
       </div>
+      ${buildStatusStepper(o.status)}
       ${o.actualKg ? `<div style="margin-bottom:8px;font-size:13px;color:var(--green);font-weight:600;">✓ Actual Collected: ${o.actualKg}kg (Quality: ${o.quality})</div>` : ''}
       ${o.tokensMinted ? `<div style="margin-bottom:8px;font-size:13px;color:var(--amber);font-weight:600;">🪙 Minted ${o.tokensMinted} $RGX <span style="font-size:10px; color:var(--text-muted); font-family:monospace; margin-left:8px;">TX: ${o.txHash.slice(0,12)}...</span></div>` : ''}
       ${acts ? `<div class="oc-actions">${acts}</div>` : ''}
