@@ -385,6 +385,37 @@ tr:hover td { background: var(--bg); }
 .reconciliation-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
 .reconciliation-sub { font-size: 11px; color: var(--text-muted); }
 
+/* SLA MONITOR */
+.sla-card { border: 1px solid var(--border); }
+.sla-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.sla-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--green), var(--amber));
+  border-radius: 999px;
+  transition: width 0.6s ease;
+}
+.sla-list { display: flex; flex-direction: column; gap: 12px; }
+.sla-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.sla-item.risk { border-color: var(--amber); background: var(--amber-light); }
+.sla-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.sla-sub { font-size: 11px; color: var(--text-muted); }
+
 /* TOASTS & MODALS */
 #toast {
   position: fixed; bottom: 32px; right: 32px; z-index: 9999;

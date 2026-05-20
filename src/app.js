@@ -11,6 +11,7 @@ const STORAGE_KEY_PREFIX = "regenx-v3:";
 const TRUST_LEDGER_KEY = "trust-ledger";
 const ESG_ALERTS_KEY = "esg-alerts";
 const CREDIT_LEDGER_KEY = "credit-ledger";
+const SLA_LEDGER_KEY = "sla-ledger";
 
 // ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
@@ -444,6 +445,107 @@ function renderReconciliationWidget() {
   `;
 }
 
+/**
+ * Load SLA ledger entries from localStorage.
+ * @returns {Array<Object>} SLA entries.
+ */
+function loadSlaLedger() {
+  try {
+    const raw = window.localStorage.getItem(SLA_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save SLA ledger entries to localStorage.
+ * @param {Array<Object>} entries - SLA entries.
+ */
+function saveSlaLedger(entries) {
+  try { window.localStorage.setItem(SLA_LEDGER_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+}
+
+/**
+ * Add a new SLA entry for a dispatch.
+ * @param {Object} order - Order object.
+ */
+function addSlaEntry(order) {
+  if (!order) return;
+  const entries = loadSlaLedger();
+  entries.push({
+    id: 'sla-' + uid(),
+    orderId: order.id,
+    org: order.providerOrg,
+    createdTs: order.ts,
+    targetMins: 90,
+    status: 'pending',
+    pickupTs: null,
+    completeTs: null,
+    deltaMins: null,
+    breach: false
+  });
+  saveSlaLedger(entries);
+}
+
+/**
+ * Update an SLA entry by order id.
+ * @param {string} orderId - Order id.
+ * @param {Object} patch - Partial entry fields.
+ */
+function updateSlaEntry(orderId, patch) {
+  const entries = loadSlaLedger();
+  const entry = entries.find(e => e.orderId === orderId);
+  if (!entry) return;
+  Object.assign(entry, patch);
+  if (entry.completeTs) {
+    const delta = (entry.completeTs - entry.createdTs) / 60000;
+    entry.deltaMins = Math.round(delta);
+    entry.breach = delta > entry.targetMins;
+    entry.status = 'completed';
+  }
+  saveSlaLedger(entries);
+}
+
+/**
+ * Calculate SLA summary stats.
+ * @returns {{total:number, breaches:number, open:number, score:number}}
+ */
+function getSlaSummary() {
+  const entries = loadSlaLedger();
+  const total = entries.length;
+  const breaches = entries.filter(e => e.breach).length;
+  const open = entries.filter(e => !e.completeTs).length;
+  const score = total ? Math.max(0, Math.round(100 - (breaches / total) * 100)) : 100;
+  return { total, breaches, open, score };
+}
+
+/**
+ * Render SLA widget.
+ * @returns {string} HTML string.
+ */
+function renderSlaWidget() {
+  const summary = getSlaSummary();
+  const badgeClass = summary.score >= 90 ? 'badge-green' : summary.score >= 75 ? 'badge-blue' : summary.score >= 60 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card sla-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Dispatch SLA Monitor</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.score}% On-Time</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.breaches} breach${summary.breaches === 1 ? '' : 'es'}</span>
+      </div>
+      <div class="sla-bar"><span style="width:${summary.score}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.open} active dispatch${summary.open === 1 ? '' : 'es'}</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-sla')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function ts() { return Date.now(); }
 function fmtDate(ms) { return new Date(ms).toLocaleDateString('en-IN', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
@@ -802,6 +904,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-pv-hist-month')" id="nav-v-pv-hist-month"><span class="nav-item-icon">🗓️</span> Monthly Records</button>
       <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
       <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
+      <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
       <button class="nav-item" onclick="showView('v-market')" id="nav-v-market"><span class="nav-item-icon">🛒</span> ReGen Exchange</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
@@ -814,6 +917,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-rd-hist')" id="nav-v-rd-hist"><span class="nav-item-icon">✓</span> Completions</button>
       <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
       <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
+      <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-rd-dash');
@@ -825,6 +929,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-pl-out')" id="nav-v-pl-out"><span class="nav-item-icon">⚗️</span> Log Output</button>
       <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
       <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
+      <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-pl-dash');
@@ -838,7 +943,7 @@ window.showView = function(viewId) {
   if(btn) btn.classList.add('active');
   
   // Set Title
-  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation' };
+  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor' };
   if(btn) document.getElementById('tb-view-title').textContent = titleMap[viewId] || btn.innerText.replace(/[^a-zA-Z\s]/g, '').trim();
   
   if (window.innerWidth <= 768) toggleSidebar(false);
@@ -946,6 +1051,10 @@ async function refreshCurrentView(fullRender = false) {
   }
   if (currentView === 'v-reconciliation') {
     renderReconciliation(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-sla') {
+    renderSlaMonitor(mc, fullRender);
     return;
   }
   if (currentView === 'v-market') {
@@ -1140,6 +1249,61 @@ function renderReconciliation(mc, fullRender) {
   `;
 }
 
+/**
+ * Render SLA monitor view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderSlaMonitor(mc, fullRender) {
+  const entries = loadSlaLedger().sort((a, b) => b.createdTs - a.createdTs);
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Dispatch SLA Monitor</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Track pickup and completion SLAs across the network.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().open}</div><div class="stat-lbl">Active</div></div>
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().breaches}</div><div class="stat-lbl">Breaches</div></div>
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().total}</div><div class="stat-lbl">Total</div></div>
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().score}%</div><div class="stat-lbl">On-Time Score</div></div>
+    </div>
+
+    <div class="glass-card sla-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Dispatches</h4>
+        <span class="badge badge-blue">SLA 90 min</span>
+      </div>
+      <div class="sla-list">
+        ${entries.length ? entries.slice(0, 12).map(e => {
+          const elapsed = Math.round(((e.completeTs || Date.now()) - e.createdTs) / 60000);
+          const liveBreach = !e.completeTs && elapsed > e.targetMins;
+          const badge = e.completeTs
+            ? (e.breach ? 'badge-red' : 'badge-green')
+            : liveBreach ? 'badge-amber' : 'badge-blue';
+          const status = e.completeTs
+            ? (e.breach ? 'BREACH' : 'ON TIME')
+            : liveBreach ? 'AT RISK' : 'IN PROGRESS';
+          return `
+            <div class="sla-item ${liveBreach ? 'risk' : ''}">
+              <div>
+                <div class="sla-title">Order #${e.orderId.slice(-6).toUpperCase()} · ${e.org}</div>
+                <div class="sla-sub">Elapsed ${elapsed} min · Target ${e.targetMins} min</div>
+                <div class="sla-sub">Started ${fmtDate(e.createdTs)}</div>
+              </div>
+              <span class="badge ${badge}">${status}</span>
+            </div>
+          `;
+        }).join('') : '<div class="empty-state">No SLA entries yet.</div>'}
+      </div>
+    </div>
+  `;
+}
+
 // ════════ PROVIDER LOGIC ════════
 async function renderProvider(mc, fullRender) {
   const orders = getAllOrders().filter(o => o.providerId === SESSION.id);
@@ -1162,6 +1326,7 @@ async function renderProvider(mc, fullRender) {
       ${renderTrustIndexCard()}
       ${renderComplianceWidget()}
       ${renderReconciliationWidget()}
+      ${renderSlaWidget()}
       <div class="two-col">
         <div>
           <h3 class="heading" style="margin-bottom:16px;">Active Dispatches</h3><div id="pv-act"></div>
@@ -1537,6 +1702,7 @@ window.submitPvRequest = function() {
     wasteType: type, kg, shift, plantId: nearest.id, plantName: nearest.org, status: 'requested'
   };
   saveOrder(o);
+  addSlaEntry(o);
   recordTrustEvent(o, 'requested', 'provider', { lat: SESSION.lat, lng: SESSION.lng });
   showToast(`✓ Dispatched! Routed to ${nearest.org} (${minDist.toFixed(1)}km away).`);
   showView('v-pv-dash');
@@ -1675,6 +1841,7 @@ async function renderRider(mc, fullRender) {
       ${renderTrustIndexCard()}
       ${renderComplianceWidget()}
       ${renderReconciliationWidget()}
+      ${renderSlaWidget()}
 
       <div class="two-col">
         <div class="${tab !== 'route' ? 'desktop-only' : ''}">
@@ -1908,6 +2075,7 @@ window.riderAccept = function(id) {
   const o = getOrder(id); if(!o) return;
   o.status = 'assigned'; o.riderId = SESSION.id; o.riderName = SESSION.name;
   saveOrder(o);
+  updateSlaEntry(o.id, { status: 'assigned' });
   recordTrustEvent(o, 'assigned', 'rider', { lat: SESSION.lat, lng: SESSION.lng });
   showToast("✓ Route Added to Batch!");
   showView('v-rd-dash');
@@ -1915,6 +2083,7 @@ window.riderAccept = function(id) {
 window.riderUpdate = function(id, st) {
   const o = getOrder(id); if(!o) return;
   o.status = st; saveOrder(o);
+  updateSlaEntry(o.id, { status: st });
   recordTrustEvent(o, st, 'rider', { lat: SESSION.lat, lng: SESSION.lng });
   refreshCurrentView();
 }
@@ -1934,6 +2103,7 @@ window.confirmPickup = function(id) {
   if(!kg) return showToast("⚠ Enter weight.");
   const o = getOrder(id); o.status = 'picked_up'; o.actualKg = kg; o.quality = document.getElementById('m-qual').value;
   saveOrder(o);
+  updateSlaEntry(o.id, { pickupTs: ts(), status: 'picked_up' });
   recordTrustEvent(o, 'picked_up', 'rider', { lat: SESSION.lat, lng: SESSION.lng });
   closeModal();
   refreshCurrentView();
@@ -2113,6 +2283,7 @@ async function renderPlant(mc, fullRender) {
       ${renderTrustIndexCard()}
       ${renderComplianceWidget()}
       ${renderReconciliationWidget()}
+      ${renderSlaWidget()}
       
       <div id="pl-ai-widget"></div>
       
@@ -2298,6 +2469,7 @@ window.confirmPlantReceipt = function(id) {
   }
 
   saveOrder(o);
+  updateSlaEntry(o.id, { completeTs: ts(), status: 'completed' });
   recordTrustEvent(o, 'completed', 'plant', { lat: SESSION.lat, lng: SESSION.lng });
   recordTrustEvent(o, 'sealed', 'plant', { lat: SESSION.lat, lng: SESSION.lng });
   addEsgAlertsForOrder(o);
