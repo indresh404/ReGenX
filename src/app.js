@@ -12,6 +12,7 @@ const TRUST_LEDGER_KEY = "trust-ledger";
 const ESG_ALERTS_KEY = "esg-alerts";
 const CREDIT_LEDGER_KEY = "credit-ledger";
 const SLA_LEDGER_KEY = "sla-ledger";
+const ENERGY_LEDGER_KEY = "energy-ledger";
 
 // ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
@@ -546,6 +547,75 @@ function renderSlaWidget() {
   `;
 }
 
+/**
+ * Load energy ledger entries from localStorage.
+ * @returns {Array<Object>} Energy ledger entries.
+ */
+function loadEnergyLedger() {
+  try {
+    const raw = window.localStorage.getItem(ENERGY_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save energy ledger entries to localStorage.
+ * @param {Array<Object>} entries - Energy entries.
+ */
+function saveEnergyLedger(entries) {
+  try { window.localStorage.setItem(ENERGY_LEDGER_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+}
+
+/**
+ * Add a new energy ledger entry.
+ * @param {Object} entry - Energy entry.
+ */
+function addEnergyEntry(entry) {
+  const entries = loadEnergyLedger();
+  entries.push(entry);
+  saveEnergyLedger(entries);
+}
+
+/**
+ * Summarize energy ledger performance.
+ * @returns {{total:number, avgScore:number, totalEnergy:number}}
+ */
+function getEnergySummary() {
+  const entries = loadEnergyLedger();
+  if (!entries.length) return { total: 0, avgScore: 0, totalEnergy: 0 };
+  const avgScore = Math.round(entries.reduce((s, e) => s + e.score, 0) / entries.length);
+  const totalEnergy = entries.reduce((s, e) => s + e.energyKwh, 0);
+  return { total: entries.length, avgScore, totalEnergy: Math.round(totalEnergy) };
+}
+
+/**
+ * Render energy yield scorecard widget.
+ * @returns {string} HTML string.
+ */
+function renderEnergyWidget() {
+  const summary = getEnergySummary();
+  const badgeClass = summary.avgScore >= 85 ? 'badge-green' : summary.avgScore >= 70 ? 'badge-blue' : summary.avgScore >= 55 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card energy-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Energy Yield Scorecard</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.avgScore || '--'} / 100</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.totalEnergy} kWh</span>
+      </div>
+      <div class="energy-bar"><span style="width:${summary.avgScore}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.total} batches scored</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-energy')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function ts() { return Date.now(); }
 function fmtDate(ms) { return new Date(ms).toLocaleDateString('en-IN', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
@@ -911,6 +981,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
       <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
       <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
+      <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
       <button class="nav-item" onclick="showView('v-market')" id="nav-v-market"><span class="nav-item-icon">🛒</span> ReGen Exchange</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
@@ -924,6 +995,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
       <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
       <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
+      <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-rd-dash');
@@ -936,6 +1008,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
       <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
       <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
+      <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-pl-dash');
@@ -949,7 +1022,7 @@ window.showView = function(viewId) {
   if(btn) btn.classList.add('active');
   
   // Set Title
-  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor' };
+  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor', 'v-energy': 'Energy Scorecard' };
   if(btn) document.getElementById('tb-view-title').textContent = titleMap[viewId] || btn.innerText.replace(/[^a-zA-Z\s]/g, '').trim();
   
   if (window.innerWidth <= 768) toggleSidebar(false);
@@ -1079,6 +1152,10 @@ async function refreshCurrentView(fullRender = false) {
   }
   if (currentView === 'v-sla') {
     renderSlaMonitor(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-energy') {
+    renderEnergyScorecard(mc, fullRender);
     return;
   }
   if (currentView === 'v-market') {
@@ -1328,6 +1405,51 @@ function renderSlaMonitor(mc, fullRender) {
   `;
 }
 
+/**
+ * Render energy yield scorecard view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderEnergyScorecard(mc, fullRender) {
+  const entries = loadEnergyLedger().sort((a, b) => b.ts - a.ts);
+  const summary = getEnergySummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Energy Yield Scorecard</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Track conversion efficiency of processed bio-waste.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.total}</div><div class="stat-lbl">Scored Batches</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.avgScore || 0}</div><div class="stat-lbl">Avg Score</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.totalEnergy}</div><div class="stat-lbl">kWh Generated</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.total ? Math.round(summary.totalEnergy / summary.total) : 0}</div><div class="stat-lbl">kWh / Batch</div></div>
+    </div>
+
+    <div class="glass-card energy-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Batches</h4>
+        <span class="badge badge-blue">Bio-to-Energy</span>
+      </div>
+      <div class="energy-list">
+        ${entries.length ? entries.slice(0, 12).map(e => `
+          <div class="energy-item">
+            <div>
+              <div class="energy-title">${e.org} · ${e.kg} kg processed</div>
+              <div class="energy-sub">${e.energyKwh} kWh · Efficiency ${e.efficiencyPct}% · ${fmtDate(e.ts)}</div>
+            </div>
+            <span class="badge ${e.score >= 85 ? 'badge-green' : e.score >= 70 ? 'badge-blue' : e.score >= 55 ? 'badge-amber' : 'badge-red'}">${e.score}</span>
+          </div>
+        `).join('') : '<div class="empty-state">No energy records yet.</div>'}
+      </div>
+    </div>
+  `;
+}
+
 // ════════ PROVIDER LOGIC ════════
 async function renderProvider(mc, fullRender) {
   const orders = getAllOrders().filter(o => o.providerId === SESSION.id);
@@ -1351,6 +1473,7 @@ async function renderProvider(mc, fullRender) {
       ${renderComplianceWidget()}
       ${renderReconciliationWidget()}
       ${renderSlaWidget()}
+      ${renderEnergyWidget()}
       <div class="two-col">
         <div>
           <h3 class="heading" style="margin-bottom:16px;">Active Dispatches</h3><div id="pv-act"></div>
@@ -1866,6 +1989,7 @@ async function renderRider(mc, fullRender) {
       ${renderComplianceWidget()}
       ${renderReconciliationWidget()}
       ${renderSlaWidget()}
+      ${renderEnergyWidget()}
 
       <div class="two-col">
         <div class="${tab !== 'route' ? 'desktop-only' : ''}">
@@ -2308,6 +2432,7 @@ async function renderPlant(mc, fullRender) {
       ${renderComplianceWidget()}
       ${renderReconciliationWidget()}
       ${renderSlaWidget()}
+      ${renderEnergyWidget()}
       
       <div id="pl-ai-widget"></div>
       
@@ -2497,6 +2622,22 @@ window.confirmPlantReceipt = function(id) {
   recordTrustEvent(o, 'completed', 'plant', { lat: SESSION.lat, lng: SESSION.lng });
   recordTrustEvent(o, 'sealed', 'plant', { lat: SESSION.lat, lng: SESSION.lng });
   addEsgAlertsForOrder(o);
+  const kgProcessed = parseFloat(o.actualKg || o.kg || 0);
+  if (kgProcessed > 0) {
+    const energyKwh = parseFloat((kgProcessed * 0.35).toFixed(2));
+    const efficiencyPct = Math.min(100, Math.round((energyKwh / (kgProcessed * 0.5)) * 100));
+    const score = Math.max(10, Math.round((efficiencyPct * 0.7) + (o.segScore ? (o.segScore * 0.3) : 0)));
+    addEnergyEntry({
+      id: 'eng-' + uid(),
+      orderId: o.id,
+      org: o.providerOrg,
+      kg: kgProcessed,
+      energyKwh,
+      efficiencyPct,
+      score,
+      ts: ts()
+    });
+  }
   closeModal();
   refreshCurrentView();
   showToast(`✓ Intake Confirmed. Minted ${earnedTokens} $RGX for provider!`);
