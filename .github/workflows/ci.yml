@@ -1,4 +1,4 @@
-name: Simple CI
+name: 🚀 ReGenX CI Pipeline
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    name: 🧪 Run Validation Suite
     runs-on: ubuntu-latest
 
     steps:
@@ -18,20 +19,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: 📦 Cache npm dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-npm-
+      - name: 📦 Install dependencies
+        run: npm ci || npm install --legacy-peer-deps
 
-      - name: 📥 Install dependencies
-        run: npm install --legacy-peer-deps --include=optional
+      - name: 🧾 Show environment info
+        run: |
+          node -v
+          npm -v
 
       - name: 🏗️ Build project
-        run: npm run build
+        run: npm run build --if-present
 
-      - name: 🧪 Run tests
+      - name: 🧪 Run full test suite
         run: npm test
+
+      - name: 📊 CI Summary
+        run: echo "✅ ReGenX CI completed successfully" >> $GITHUB_STEP_SUMMARY
