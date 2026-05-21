@@ -16,6 +16,7 @@ const ENERGY_LEDGER_KEY = "energy-ledger";
 const SENSOR_LEDGER_KEY = "sensor-ledger";
 const EMISSIONS_LEDGER_KEY = "emissions-ledger";
 const QUALITY_LEDGER_KEY = "quality-ledger";
+const AUTOMATION_PIPELINE_KEY = "automation-pipeline";
 
 // ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
@@ -829,6 +830,114 @@ function renderQualityWidget() {
   `;
 }
 
+/**
+ * Load automation pipeline tasks.
+ * @returns {Array<Object>} Pipeline tasks.
+ */
+function loadAutomationPipeline() {
+  try {
+    const raw = window.localStorage.getItem(AUTOMATION_PIPELINE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save automation pipeline tasks.
+ * @param {Array<Object>} tasks - Pipeline tasks.
+ */
+function saveAutomationPipeline(tasks) {
+  try { window.localStorage.setItem(AUTOMATION_PIPELINE_KEY, JSON.stringify(tasks)); } catch { /* ignore */ }
+}
+
+/**
+ * Seed default automation tasks for the admin pipeline.
+ * @returns {Array<Object>} Seeded tasks.
+ */
+function seedAutomationPipeline() {
+  const existing = loadAutomationPipeline();
+  if (existing.length) return existing;
+  const tasks = [
+    { id: 'auto-' + uid(), title: 'Triage new issues', owner: 'Unassigned', status: 'queued', priority: 'high', ts: ts() },
+    { id: 'auto-' + uid(), title: 'Assign reviewers to PRs', owner: 'Unassigned', status: 'queued', priority: 'medium', ts: ts() },
+    { id: 'auto-' + uid(), title: 'Label GSSoC issues', owner: 'Unassigned', status: 'queued', priority: 'high', ts: ts() },
+    { id: 'auto-' + uid(), title: 'Update project board', owner: 'Unassigned', status: 'queued', priority: 'low', ts: ts() }
+  ];
+  saveAutomationPipeline(tasks);
+  return tasks;
+}
+
+/**
+ * Update a pipeline task.
+ * @param {string} id - Task id.
+ * @param {Object} patch - Partial task fields.
+ */
+window.updateAutomationTask = function(id, patch) {
+  const tasks = loadAutomationPipeline();
+  const task = tasks.find(t => t.id === id);
+  if (!task) return;
+  Object.assign(task, patch);
+  saveAutomationPipeline(tasks);
+  refreshCurrentView(true);
+}
+
+/**
+ * Auto-assign a queued task to the current user.
+ * @param {string} id - Task id.
+ */
+window.autoAssignTask = function(id) {
+  updateAutomationTask(id, { owner: SESSION.name || 'Admin', status: 'active' });
+}
+
+/**
+ * Auto-assign the next queued task.
+ */
+window.autoAssignNext = function() {
+  const tasks = loadAutomationPipeline();
+  const next = tasks.find(t => t.status === 'queued');
+  if (!next) return showToast('✓ No queued tasks left.');
+  updateAutomationTask(next.id, { owner: SESSION.name || 'Admin', status: 'active' });
+}
+
+/**
+ * Get automation pipeline summary.
+ * @returns {{queued:number, active:number, done:number}}
+ */
+function getAutomationSummary() {
+  const tasks = loadAutomationPipeline();
+  return {
+    queued: tasks.filter(t => t.status === 'queued').length,
+    active: tasks.filter(t => t.status === 'active').length,
+    done: tasks.filter(t => t.status === 'done').length
+  };
+}
+
+/**
+ * Render automation pipeline widget.
+ * @returns {string} HTML string.
+ */
+function renderAutomationWidget() {
+  const summary = getAutomationSummary();
+  return `
+    <div class="glass-card automation-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Open Source Automation</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.queued} queued</div>
+        </div>
+        <span class="badge badge-blue">Admin Pipeline</span>
+      </div>
+      <div class="automation-bar"><span style="width:${Math.min(100, (summary.done / Math.max(summary.queued + summary.active + summary.done, 1)) * 100)}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.active} active · ${summary.done} done</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-automation')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function ts() { return Date.now(); }
 function fmtDate(ms) { return new Date(ms).toLocaleDateString('en-IN', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
@@ -1192,6 +1301,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
       <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
       <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
+      <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
       <button class="nav-item" onclick="showView('v-market')" id="nav-v-market"><span class="nav-item-icon">🛒</span> ReGen Exchange</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
@@ -1209,6 +1319,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
       <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
       <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
+      <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-rd-dash');
@@ -1225,6 +1336,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
       <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
       <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
+      <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-pl-dash');
@@ -1238,7 +1350,7 @@ window.showView = function(viewId) {
   if(btn) btn.classList.add('active');
   
   // Set Title
-  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor', 'v-energy': 'Energy Scorecard', 'v-sensor': 'Sensor Reliability', 'v-emissions': 'Emissions Tracker', 'v-quality': 'Quality Index' };
+  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor', 'v-energy': 'Energy Scorecard', 'v-sensor': 'Sensor Reliability', 'v-emissions': 'Emissions Tracker', 'v-quality': 'Quality Index', 'v-automation': 'Automation Pipeline' };
   if(btn) document.getElementById('tb-view-title').textContent = titleMap[viewId] || btn.innerText.replace(/[^a-zA-Z\s]/g, '').trim();
   
   if (window.innerWidth <= 768) toggleSidebar(false);
@@ -1366,6 +1478,10 @@ async function refreshCurrentView(fullRender = false) {
   }
   if (currentView === 'v-quality') {
     renderQualityIndex(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-automation') {
+    renderAutomationPipeline(mc, fullRender);
     return;
   }
   if (currentView === 'v-market') {
@@ -1795,6 +1911,56 @@ function renderQualityIndex(mc, fullRender) {
   `;
 }
 
+/**
+ * Render automation pipeline view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderAutomationPipeline(mc, fullRender) {
+  const tasks = seedAutomationPipeline().sort((a, b) => b.ts - a.ts);
+  const summary = getAutomationSummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Automation Pipeline</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Streamline open-source operations with smart task assignment.</div>
+      </div>
+      <button class="btn btn-primary" onclick="autoAssignNext()">⚙️ Auto-Assign Next</button>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.queued}</div><div class="stat-lbl">Queued</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.active}</div><div class="stat-lbl">Active</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.done}</div><div class="stat-lbl">Done</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.queued + summary.active + summary.done}</div><div class="stat-lbl">Total</div></div>
+    </div>
+
+    <div class="glass-card automation-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Task Queue</h4>
+        <span class="badge badge-blue">Automation Ops</span>
+      </div>
+      <div class="automation-list">
+        ${tasks.length ? tasks.map(t => `
+          <div class="automation-item">
+            <div>
+              <div class="automation-title">${t.title}</div>
+              <div class="automation-sub">${t.owner} · ${t.priority.toUpperCase()} · ${fmtDate(t.ts)}</div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span class="badge ${t.status === 'done' ? 'badge-green' : t.status === 'active' ? 'badge-amber' : 'badge-blue'}">${t.status.toUpperCase()}</span>
+              ${t.status === 'queued' ? `<button class="btn btn-ghost btn-sm" onclick="autoAssignTask('${t.id}')">Assign</button>` : ''}
+              ${t.status !== 'done' ? `<button class="btn btn-ghost btn-sm" onclick="updateAutomationTask('${t.id}', { status: 'done' })">Done</button>` : ''}
+            </div>
+          </div>
+        `).join('') : '<div class="empty-state">No automation tasks queued.</div>'}
+      </div>
+    </div>
+  `;
+}
+
 // ════════ PROVIDER LOGIC ════════
 async function renderProvider(mc, fullRender) {
   const orders = getAllOrders().filter(o => o.providerId === SESSION.id);
@@ -1822,6 +1988,7 @@ async function renderProvider(mc, fullRender) {
       ${renderSensorWidget()}
       ${renderEmissionsWidget()}
       ${renderQualityWidget()}
+      ${renderAutomationWidget()}
       <div class="two-col">
         <div>
           <h3 class="heading" style="margin-bottom:16px;">Active Dispatches</h3><div id="pv-act"></div>
@@ -2341,6 +2508,7 @@ async function renderRider(mc, fullRender) {
       ${renderSensorWidget()}
       ${renderEmissionsWidget()}
       ${renderQualityWidget()}
+      ${renderAutomationWidget()}
 
       <div class="two-col">
         <div class="${tab !== 'route' ? 'desktop-only' : ''}">
@@ -2787,6 +2955,7 @@ async function renderPlant(mc, fullRender) {
       ${renderSensorWidget()}
       ${renderEmissionsWidget()}
       ${renderQualityWidget()}
+      ${renderAutomationWidget()}
       
       <div id="pl-ai-widget"></div>
       
