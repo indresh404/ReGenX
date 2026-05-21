@@ -557,6 +557,16 @@ function getSlaSummary() {
  */
 function renderSlaWidget() {
   const summary = getSlaSummary();
+  if (!summary.total) {
+    return renderEmptyStateCard({
+      icon: '⏱️',
+      title: 'No dispatch SLA data',
+      description: 'Dispatch activity tracking will begin once orders are processed.',
+      subtext: 'SLA metrics and on-time performance will appear after your first completed dispatch.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
+  }
   const badgeClass = summary.score >= 90 ? 'badge-green' : summary.score >= 75 ? 'badge-blue' : summary.score >= 60 ? 'badge-amber' : 'badge-red';
   return `
     <div class="glass-card sla-card" style="margin-bottom:24px;">
@@ -626,6 +636,16 @@ function getEnergySummary() {
  */
 function renderEnergyWidget() {
   const summary = getEnergySummary();
+  if (!summary.total) {
+    return renderEmptyStateCard({
+      icon: '⚡',
+      title: 'No energy analytics yet',
+      description: 'Energy yield scoring is available once plant processing data is recorded.',
+      subtext: 'Complete your first intake and log biogas output to see efficiency metrics.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
+  }
   const badgeClass = summary.avgScore >= 85 ? 'badge-green' : summary.avgScore >= 70 ? 'badge-blue' : summary.avgScore >= 55 ? 'badge-amber' : 'badge-red';
   return `
     <div class="glass-card energy-card" style="margin-bottom:24px;">
@@ -697,6 +717,17 @@ function getSensorReliabilitySummary() {
  */
 function renderSensorWidget() {
   const summary = getSensorReliabilitySummary();
+  if (!summary.total) {
+    return renderEmptyStateCard({
+      icon: '📡',
+      title: 'No IoT bins connected',
+      description: 'Sensor network monitoring requires registered IoT bins.',
+      subtext: 'Register your first waste bin to track fill levels and receive alerts.',
+      statusLabel: 'Idle',
+      tone: 'inactive',
+      actionHtml: SESSION.role === 'provider' ? '<button class="btn btn-ghost btn-sm" onclick="showView(\'v-iot-bins\')" style="margin-top:8px;">Connect Bins →</button>' : ''
+    });
+  }
   const badgeClass = summary.score >= 90 ? 'badge-green' : summary.score >= 75 ? 'badge-blue' : summary.score >= 60 ? 'badge-amber' : 'badge-red';
   return `
     <div class="glass-card sensor-reliability-card" style="margin-bottom:24px;">
@@ -767,6 +798,16 @@ function getEmissionsSummary() {
  */
 function renderEmissionsWidget() {
   const summary = getEmissionsSummary();
+  if (!summary.total) {
+    return renderEmptyStateCard({
+      icon: '🌍',
+      title: 'No emissions data recorded',
+      description: 'Route emissions tracking requires completed deliveries.',
+      subtext: 'Finish your first delivery to calculate carbon offset and emissions impact.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
+  }
   const badgeClass = summary.avgScore >= 85 ? 'badge-green' : summary.avgScore >= 70 ? 'badge-blue' : summary.avgScore >= 55 ? 'badge-amber' : 'badge-red';
   return `
     <div class="glass-card emissions-card" style="margin-bottom:24px;">
@@ -2009,15 +2050,27 @@ async function renderProvider(mc, fullRender) {
        id, org: (DB.get('acc:'+id)||{org:'Unknown'}).org, kg: lbMap[id]
     })).sort((a,b)=>b.kg - a.kg).slice(0,3);
     
-    const lbHTML = lbSorted.map((item, i) => `
-      <div class="between" style="padding:8px 0; border-bottom:${i<2?'1px solid var(--border)':'none'};">
-         <div style="font-weight:600;"><span style="color:var(--amber);">${i+1}.</span> ${item.org} ${item.id===SESSION.id?'(You)':''}</div>
-         <div class="badge badge-green">${item.kg} kg</div>
-      </div>
-    `).join('');
-    
     const lbDiv = document.getElementById('pv-leaderboard');
-    if(lbDiv) lbDiv.innerHTML = lbHTML;
+    if(lbDiv) {
+      if (!allCompleted.length) {
+        lbDiv.innerHTML = renderDashboardListState({
+          icon: '🏆',
+          title: 'Leaderboard coming soon',
+          description: 'Regional rankings update as you complete dispatches.',
+          subtext: 'Top contributors by material recovered will appear here.',
+          statusLabel: 'Idle',
+          tone: 'inactive'
+        });
+      } else {
+        const lbHTML = lbSorted.map((item, i) => `
+          <div class="between" style="padding:8px 0; border-bottom:${i<2?'1px solid var(--border)':'none'};">
+             <div style="font-weight:600;"><span style="color:var(--amber);">${i+1}.</span> ${item.org} ${item.id===SESSION.id?'(You)':''}</div>
+             <div class="badge badge-green">${item.kg} kg</div>
+          </div>
+        `).join('');
+        lbDiv.innerHTML = lbHTML;
+      }
+    }
 
     // Trust Protocol Integration
     const trustScore = TrustProtocol.calculateScore(SESSION, orders);
