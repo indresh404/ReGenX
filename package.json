@@ -3,8 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "dependencies": {
+    "express": "^4.22.2",
+    "socket.io": "^4.8.3"
+  },
   "scripts": {
-    "serve": "python -m http.server 4173",
+    "serve": "node ./scripts/realtime-server.mjs",
     "deploy:appwrite": "node ./scripts/appwrite-deploy.mjs"
   }
 }
