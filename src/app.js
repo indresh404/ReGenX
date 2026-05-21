@@ -4194,3 +4194,36 @@ function detectDeviceClass() {
 
 detectDeviceClass();
 window.detectDeviceClass = detectDeviceClass;
+
+// ==========================================
+// DARK MODE TOGGLE LOGIC (ISSUE #79)
+// ==========================================
+document.addEventListener('DOMContentLoaded', () => {
+    const navToggleBtn = document.getElementById('navbar-theme-toggle');
+    const rootHtml = document.documentElement;
+
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        rootHtml.classList.add('dark');
+        if (navToggleBtn) navToggleBtn.innerText = '☀️';
+    } else {
+        rootHtml.classList.remove('dark');
+        if (navToggleBtn) navToggleBtn.innerText = '🌙';
+    }
+
+    if (navToggleBtn) {
+        navToggleBtn.addEventListener('click', () => {
+            if (rootHtml.classList.contains('dark')) {
+                rootHtml.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+                navToggleBtn.innerText = '🌙';
+            } else {
+                rootHtml.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+                navToggleBtn.innerText = '☀️';
+            }
+        });
+    }
+});
