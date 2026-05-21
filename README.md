@@ -13,7 +13,7 @@
  👨‍🏫 Project Mentor
 </h3>
 <h3>
-  SATYAM PANDEY
+ SATYAM PANDEY
 </h3>
 
  LinkedIn: https://www.linkedin.com/in/satyam-pandey-0b246432a/
@@ -45,7 +45,8 @@ The platform combines AI-powered waste scanning, live GPS tracking, analytics da
 - Contamination detection and organic percentage scoring
 - Auto-fills dispatch form fields based on scan results
 - Supports live camera capture and file upload
-  <br>
+  
+<br>
 
 ### 📍 Real-Time GPS & Mapping
 - High-accuracy GPS detection with draggable pin refinement
@@ -125,7 +126,7 @@ Ensure accessibility and mobile optimization
 </div>
 
 ---
-
+<div align="center">
 
 ## 📁 Project Structure
 
@@ -154,7 +155,7 @@ ReGenX/
 ├── README.md                 # Project documentation
 └── service-worker.js         # Offline caching and performance optimization
 ```
-
+</div>
 ---
  
 ## 🚀 Getting Started
