@@ -2,6 +2,9 @@
 
 ### *Smart Circular Bio-Waste Logistics Platform with AI scanning, real-time GPS tracking, and role-based dashboards for Providers, Riders & Processing Plants.*
 
+
+
+
 <div align="center">
 
 ### 👨‍🏫 Project Mentor
@@ -10,8 +13,6 @@
  LinkedIn: https://www.linkedin.com/in/satyam-pandey-0b246432a/
  Phone: 9820866720
 
-</div>
-
 ![HTML](https://img.shields.io/badge/HTML5-E34F26?style=flat&logo=html5&logoColor=white)
 ![CSS3](https://img.shields.io/badge/CSS3-1572B6?style=flat&logo=css3&logoColor=white)
 ![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black)
@@ -19,6 +20,8 @@
 ![Leaflet](https://img.shields.io/badge/Leaflet-199900?style=flat&logo=leaflet&logoColor=white)
 ![PWA](https://img.shields.io/badge/PWA-5A0FC8?style=flat&logo=pwa&logoColor=white)
 ![Chart.js](https://img.shields.io/badge/Chart.js-FF6384?style=flat&logo=chartdotjs&logoColor=white)
+
+</div>
 
 > ReGenX is a premium Progressive Web App (PWA) that digitizes the entire bio-waste supply chain — from hotel waste generation, through GPS-tracked rider pickup, to verified delivery at processing plants.
 
