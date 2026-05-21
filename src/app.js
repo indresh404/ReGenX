@@ -15,6 +15,7 @@ const SLA_LEDGER_KEY = "sla-ledger";
 const ENERGY_LEDGER_KEY = "energy-ledger";
 const SENSOR_LEDGER_KEY = "sensor-ledger";
 const EMISSIONS_LEDGER_KEY = "emissions-ledger";
+const QUALITY_LEDGER_KEY = "quality-ledger";
 
 // ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
@@ -786,6 +787,75 @@ function renderEmissionsWidget() {
   `;
 }
 
+/**
+ * Load compost quality ledger entries.
+ * @returns {Array<Object>} Quality entries.
+ */
+function loadQualityLedger() {
+  try {
+    const raw = window.localStorage.getItem(QUALITY_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save compost quality ledger entries.
+ * @param {Array<Object>} entries - Quality entries.
+ */
+function saveQualityLedger(entries) {
+  try { window.localStorage.setItem(QUALITY_LEDGER_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+}
+
+/**
+ * Add a compost quality ledger entry.
+ * @param {Object} entry - Quality entry.
+ */
+function addQualityEntry(entry) {
+  const entries = loadQualityLedger();
+  entries.push(entry);
+  saveQualityLedger(entries);
+}
+
+/**
+ * Summarize compost quality metrics.
+ * @returns {{total:number, avgScore:number, lowCount:number}}
+ */
+function getQualitySummary() {
+  const entries = loadQualityLedger();
+  if (!entries.length) return { total: 0, avgScore: 0, lowCount: 0 };
+  const avgScore = Math.round(entries.reduce((s, e) => s + e.score, 0) / entries.length);
+  const lowCount = entries.filter(e => e.score < 60).length;
+  return { total: entries.length, avgScore, lowCount };
+}
+
+/**
+ * Render compost quality widget.
+ * @returns {string} HTML string.
+ */
+function renderQualityWidget() {
+  const summary = getQualitySummary();
+  const badgeClass = summary.avgScore >= 85 ? 'badge-green' : summary.avgScore >= 70 ? 'badge-blue' : summary.avgScore >= 55 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card quality-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Compost Quality Index</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.avgScore || '--'} / 100</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.lowCount} low</span>
+      </div>
+      <div class="quality-bar"><span style="width:${summary.avgScore}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.total} batches graded</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-quality')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function ts() { return Date.now(); }
 function fmtDate(ms) { return new Date(ms).toLocaleDateString('en-IN', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
@@ -1257,6 +1327,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
       <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
       <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
+      <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
       <button class="nav-item" onclick="showView('v-market')" id="nav-v-market"><span class="nav-item-icon">🛒</span> ReGen Exchange</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
@@ -1273,6 +1344,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
       <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
       <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
+      <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-rd-dash');
@@ -1288,6 +1360,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
       <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
       <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
+      <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-pl-dash');
@@ -1301,7 +1374,7 @@ window.showView = function(viewId) {
   if(btn) btn.classList.add('active');
   
   // Set Title
-  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor', 'v-energy': 'Energy Scorecard', 'v-sensor': 'Sensor Reliability', 'v-emissions': 'Emissions Tracker' };
+  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor', 'v-energy': 'Energy Scorecard', 'v-sensor': 'Sensor Reliability', 'v-emissions': 'Emissions Tracker', 'v-quality': 'Quality Index' };
   if(btn) document.getElementById('tb-view-title').textContent = titleMap[viewId] || btn.innerText.replace(/[^a-zA-Z\s]/g, '').trim();
   
   if (window.innerWidth <= 768) toggleSidebar(false);
@@ -1562,6 +1635,10 @@ async function refreshCurrentView(fullRender = false) {
   }
   if (currentView === 'v-emissions') {
     renderEmissionsTracker(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-quality') {
+    renderQualityIndex(mc, fullRender);
     return;
   }
   if (currentView === 'v-market') {
@@ -1986,6 +2063,51 @@ function renderEmissionsTracker(mc, fullRender) {
   `;
 }
 
+/**
+ * Render compost quality index view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderQualityIndex(mc, fullRender) {
+  const entries = loadQualityLedger().sort((a, b) => b.ts - a.ts);
+  const summary = getQualitySummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Compost Quality Index</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Track segregation scores and compost quality outcomes.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.total}</div><div class="stat-lbl">Graded Batches</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.avgScore || 0}</div><div class="stat-lbl">Avg Score</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.lowCount}</div><div class="stat-lbl">Low Quality</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.total ? Math.round((summary.lowCount / summary.total) * 100) : 0}%</div><div class="stat-lbl">Low Rate</div></div>
+    </div>
+
+    <div class="glass-card quality-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Batches</h4>
+        <span class="badge badge-blue">Segregation Score</span>
+      </div>
+      <div class="quality-list">
+        ${entries.length ? entries.slice(0, 12).map(e => `
+          <div class="quality-item">
+            <div>
+              <div class="quality-title">${e.org} · ${e.kg} kg processed</div>
+              <div class="quality-sub">Score ${e.score} · Seg ${e.segScore}% · ${fmtDate(e.ts)}</div>
+            </div>
+            <span class="badge ${e.score >= 85 ? 'badge-green' : e.score >= 70 ? 'badge-blue' : e.score >= 55 ? 'badge-amber' : 'badge-red'}">${e.score}</span>
+          </div>
+        `).join('') : '<div class="empty-state">No quality records yet.</div>'}
+      </div>
+    </div>
+  `;
+}
+
 // ════════ PROVIDER LOGIC ════════
 async function renderProvider(mc, fullRender) {
   const orders = getAllOrders().filter(o => o.providerId === SESSION.id);
@@ -2012,6 +2134,7 @@ async function renderProvider(mc, fullRender) {
       ${renderEnergyWidget()}
       ${renderSensorWidget()}
       ${renderEmissionsWidget()}
+      ${renderQualityWidget()}
       <div class="two-col">
         <div>
           <h3 class="heading" style="margin-bottom:16px;">Active Dispatches</h3><div id="pv-act"></div>
@@ -2579,6 +2702,7 @@ async function renderRider(mc, fullRender) {
       ${renderEnergyWidget()}
       ${renderSensorWidget()}
       ${renderEmissionsWidget()}
+      ${renderQualityWidget()}
 
       <div class="two-col">
         <div class="${tab !== 'route' ? 'desktop-only' : ''}">
@@ -3068,6 +3192,7 @@ async function renderPlant(mc, fullRender) {
       ${renderEnergyWidget()}
       ${renderSensorWidget()}
       ${renderEmissionsWidget()}
+      ${renderQualityWidget()}
       
       <div id="pl-ai-widget"></div>
       
@@ -3351,6 +3476,19 @@ window.confirmPlantReceipt = function(id) {
       emissionKg,
       offsetKg,
       score,
+      ts: ts()
+    });
+  }
+  if (kgProcessed > 0) {
+    const segScore = parseFloat(o.segScore || 0);
+    const qualityScore = Math.max(10, Math.min(100, Math.round(segScore || 70)));
+    addQualityEntry({
+      id: 'qlt-' + uid(),
+      orderId: o.id,
+      org: o.providerOrg,
+      kg: kgProcessed,
+      segScore: segScore || 0,
+      score: qualityScore,
       ts: ts()
     });
   }
