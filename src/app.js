@@ -1580,7 +1580,7 @@ function buildOrderCard(o, role) {
     acts = `<button class="btn btn-primary btn-sm" onclick="openPlantConfirm('${o.id}')">Confirm Receipt ✓</button>`;
   }
   if (['provider', 'rider', 'plant'].includes(role) && o.status === 'completed') {
-    acts += `<button class="btn btn-outline-danger btn-sm" onclick="deleteOrder('${o.id}')" style="margin-left:auto;">🗑 Delete Record</button>`;
+    acts += `<button class="btn btn-outline-danger btn-sm" onclick="deleteOrder('${o.id}')">🗑 Delete Record</button>`;
   }
 
   acts += `<button class="btn btn-ghost btn-sm" onclick="openIntegrityScan('${o.id}')">🛡 Integrity Scan</button>`;
@@ -2402,15 +2402,19 @@ async function renderProvider(mc, fullRender) {
   if (currentView === 'v-pv-hist-week' || currentView === 'v-pv-hist-month') {
     const isMonth = currentView === 'v-pv-hist-month';
     const limitDays = isMonth ? 30 : 7;
+
     const now = Date.now();
+    const completed = getAllOrders().filter(o => o.providerId === SESSION.id && o.status === 'completed');
     const filteredHistory = completed.filter(o => (now - o.ts) <= (limitDays * 24 * 60 * 60 * 1000));
     
     if(fullRender) mc.innerHTML = `
-      <div class="between" style="margin-bottom:24px;">
-         <h3 class="heading" style="margin-bottom:0;">${isMonth ? 'Monthly' : 'Weekly'} Records</h3>
-         ${filteredHistory.length ? `<button class="btn btn-outline-danger btn-sm" onclick="clearAllHistory('provider')">🗑 Clear All History</button>` : ''}
-      </div>
-      <div id="pv-hist-list"></div>
+      <section class="records-shell" aria-label="${isMonth ? 'Monthly' : 'Weekly'} records">
+        <div class="between records-header">
+           <h3 class="heading" style="margin-bottom:0;">${isMonth ? 'Monthly' : 'Weekly'} Records</h3>
+           ${filteredHistory.length ? `<div class="records-tools"><button class="btn btn-outline-danger btn-sm" onclick="clearAllHistory('provider')">🗑 Clear All History</button></div>` : ''}
+        </div>
+        <div id="pv-hist-list" class="record-stack"></div>
+      </section>
     `;
     document.getElementById('pv-hist-list').innerHTML = filteredHistory.length ? filteredHistory.map(o=>buildOrderCard(o,'provider')).join('') : renderDashboardListState({
       icon: '📦',
