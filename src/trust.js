@@ -62,5 +62,81 @@ export const TrustProtocol = {
     calculateReward: (baseAmount, score) => {
         const { multiplier } = TrustProtocol.getRankDetails(score);
         return Math.round(baseAmount * multiplier);
+    },
+
+    /**
+     * Calculates deviation in kilometers from a straight route line.
+     * @param {{lat:number,lng:number}} start - Route start coordinates.
+     * @param {{lat:number,lng:number}} end - Route end coordinates.
+     * @param {{lat:number,lng:number}} point - Event coordinates.
+     * @param {(lat1:number,lng1:number,lat2:number,lng2:number)=>number} distanceFn - Distance function.
+     * @returns {number} Deviation in km.
+     */
+    calculateRouteDeviationKm: (start, end, point, distanceFn) => {
+        if (!start || !end || !point || !distanceFn) return 0;
+        const a = distanceFn(start.lat, start.lng, point.lat, point.lng);
+        const b = distanceFn(point.lat, point.lng, end.lat, end.lng);
+        const c = distanceFn(start.lat, start.lng, end.lat, end.lng);
+        if (!c) return 0;
+        const s = (a + b + c) / 2;
+        const area = Math.max(s * (s - a) * (s - b) * (s - c), 0);
+        const height = (2 * Math.sqrt(area)) / c;
+        return Number.isFinite(height) ? height : 0;
+    },
+
+    /**
+     * Analyzes integrity events for anomalies.
+     * @param {Array<Object>} events - Ledger events for an order.
+     * @param {{start?:{lat:number,lng:number}, end?:{lat:number,lng:number}}} route - Route endpoints.
+     * @param {(lat1:number,lng1:number,lat2:number,lng2:number)=>number} distanceFn - Distance function.
+     * @returns {{maxGapMins:number,maxDeviationKm:number,anomalies:{timeGap:boolean,routeDeviation:boolean}}}
+     */
+    analyzeIntegrity: (events, route, distanceFn) => {
+        if (!events || events.length === 0) {
+            return { maxGapMins: 0, maxDeviationKm: 0, anomalies: { timeGap: false, routeDeviation: false } };
+        }
+
+        const sorted = [...events].sort((a, b) => a.ts - b.ts);
+        let maxGapMins = 0;
+        for (let i = 1; i < sorted.length; i++) {
+            const gap = (sorted[i].ts - sorted[i - 1].ts) / 60000;
+            if (gap > maxGapMins) maxGapMins = gap;
+        }
+
+        let maxDeviationKm = 0;
+        if (route && route.start && route.end && distanceFn) {
+            sorted.forEach(e => {
+                if (typeof e.lat !== 'number' || typeof e.lng !== 'number') return;
+                const dev = TrustProtocol.calculateRouteDeviationKm(route.start, route.end, { lat: e.lat, lng: e.lng }, distanceFn);
+                if (dev > maxDeviationKm) maxDeviationKm = dev;
+            });
+        }
+
+        return {
+            maxGapMins,
+            maxDeviationKm,
+            anomalies: {
+                timeGap: maxGapMins > 45,
+                routeDeviation: maxDeviationKm > 1.5
+            }
+        };
+    },
+
+    /**
+     * Calculates a trust integrity score from ledger events.
+     * @param {Array<Object>} events - Ledger events for an order.
+     * @param {{start?:{lat:number,lng:number}, end?:{lat:number,lng:number}}} route - Route endpoints.
+     * @param {(lat1:number,lng1:number,lat2:number,lng2:number)=>number} distanceFn - Distance function.
+     * @returns {{score:number, maxGapMins:number, maxDeviationKm:number, anomalies:{timeGap:boolean,routeDeviation:boolean}}}
+     */
+    calculateIntegrityScore: (events, route, distanceFn) => {
+        const analysis = TrustProtocol.analyzeIntegrity(events, route, distanceFn);
+        let score = 100;
+        if (!events || events.length < 2) score -= 10;
+        if (analysis.anomalies.timeGap) score -= 25;
+        if (analysis.anomalies.routeDeviation) score -= 25;
+        if (!analysis.anomalies.routeDeviation && analysis.maxDeviationKm > 0.7) score -= 10;
+        score = Math.max(0, Math.min(100, Math.round(score)));
+        return { score, ...analysis };
     }
 };

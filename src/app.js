@@ -5,8 +5,20 @@ import { Intelligence } from './intelligence.js';
 import { TrustProtocol } from './trust.js';
 import { YieldOptimizer } from './yield-optimizer.js';
 import { RouteOptimizer } from './route-optimizer.js';
+import { AuditPortal } from './audit-portal.js';
+import { ReGenXRealtime } from './realtime-sync.js';
+import { CloudSync } from './cloud-sync.js';
 
 const STORAGE_KEY_PREFIX = "regenx-v3:";
+const TRUST_LEDGER_KEY = "trust-ledger";
+const ESG_ALERTS_KEY = "esg-alerts";
+const CREDIT_LEDGER_KEY = "credit-ledger";
+const SLA_LEDGER_KEY = "sla-ledger";
+const ENERGY_LEDGER_KEY = "energy-ledger";
+const SENSOR_LEDGER_KEY = "sensor-ledger";
+const EMISSIONS_LEDGER_KEY = "emissions-ledger";
+const QUALITY_LEDGER_KEY = "quality-ledger";
+const AUTOMATION_PIPELINE_KEY = "automation-pipeline";
 
 // ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
@@ -21,7 +33,7 @@ if ('serviceWorker' in navigator) {
           window.showToast(event.data.message);
         }
         if (event.data?.type === 'NAVIGATE') {
-          window.showView && window.showView('v-r-dash');
+          window.showView && window.showView('v-rd-dash');
         }
       });
     })
@@ -71,7 +83,18 @@ const SHIFTS = ['Morning Shift (08:00 - 12:00)', 'Evening Shift (16:00 - 20:00)'
 // ── DB HELPER ──
 const DB = {
   get: (key) => { try { const r = window.localStorage.getItem(STORAGE_KEY_PREFIX + key); return r ? JSON.parse(r) : null; } catch { return null; } },
-  set: (key, val) => { try { window.localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(val)); return true; } catch { return false; } },
+  set: (key, val, options = {}) => { try {
+    window.localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(val));
+    if (!options.silent && ReGenXRealtime) {
+      ReGenXRealtime.syncStorageMutation({
+        updates: [{ key: STORAGE_KEY_PREFIX + key, value: val, action: 'set' }],
+        rooms: options.rooms,
+        eventType: options.eventType || 'KPI_UPDATED',
+        meta: options.meta || {}
+      });
+    }
+    return true;
+  } catch { return false; } },
   list: (prefix) => {
     try {
       const keys = [];
@@ -83,6 +106,911 @@ const DB = {
     } catch { return []; }
   }
 };
+
+function getRealtimeRoomsForRole(role) {
+  const rooms = ['network_room'];
+  if (role === 'provider') rooms.push('providers_room');
+  if (role === 'rider') rooms.push('riders_room');
+  if (role === 'plant') rooms.push('plants_room');
+  rooms.push('admin_room');
+  return Array.from(new Set(rooms));
+}
+
+function publishOperationalEvent(type, updates = [], meta = {}, rooms = null) {
+  if (!ReGenXRealtime) return;
+  ReGenXRealtime.emitOperationalEvent({
+    type,
+    rooms: rooms || getRealtimeRoomsForRole(SESSION.role),
+    updates,
+    meta
+  });
+}
+
+/**
+ * Load trust ledger events from localStorage.
+ * @returns {Array<Object>} Ledger events.
+ */
+function loadTrustLedger() {
+  try {
+    const raw = window.localStorage.getItem(TRUST_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save trust ledger events to localStorage.
+ * @param {Array<Object>} events - Ledger events.
+ */
+function saveTrustLedger(events) {
+  try {
+    window.localStorage.setItem(TRUST_LEDGER_KEY, JSON.stringify(events));
+    ReGenXRealtime?.syncRawKey(TRUST_LEDGER_KEY, events, { eventType: 'KPI_UPDATED', rooms: ['network_room', 'providers_room', 'riders_room', 'plants_room'] });
+  } catch { /* ignore */ }
+}
+
+/**
+ * Generate a ledger hash (SHA-256 length) for integrity records.
+ * @returns {string} Hex hash with 0x prefix.
+ */
+function generateLedgerHash() {
+  if (window.crypto && window.crypto.getRandomValues) {
+    const bytes = new Uint8Array(32);
+    window.crypto.getRandomValues(bytes);
+    return '0x' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+}
+
+/**
+ * Get route endpoints for an order.
+ * @param {Object} order - Order object.
+ * @returns {{start?:{lat:number,lng:number}, end?:{lat:number,lng:number}}}
+ */
+function getOrderRouteEndpoints(order) {
+  if (!order) return {};
+  const plant = order.plantId ? DB.get('acc:' + order.plantId) : null;
+  const start = (typeof order.providerLat === 'number' && typeof order.providerLng === 'number')
+    ? { lat: order.providerLat, lng: order.providerLng }
+    : null;
+  const end = plant && typeof plant.lat === 'number' && typeof plant.lng === 'number'
+    ? { lat: plant.lat, lng: plant.lng }
+    : null;
+  return { start, end };
+}
+
+/**
+ * Get ledger events for a specific order.
+ * @param {string} orderId - Order id.
+ * @returns {Array<Object>} Order events.
+ */
+function getOrderLedgerEvents(orderId) {
+  return loadTrustLedger().filter(e => e.orderId === orderId).sort((a, b) => a.ts - b.ts);
+}
+
+/**
+ * Calculate integrity score and anomalies for an order.
+ * @param {Object} order - Order object.
+ * @returns {{score:number, maxGapMins:number, maxDeviationKm:number, anomalies:{timeGap:boolean,routeDeviation:boolean}}}
+ */
+function getOrderIntegrity(order) {
+  const events = getOrderLedgerEvents(order.id);
+  const route = getOrderRouteEndpoints(order);
+  return TrustProtocol.calculateIntegrityScore(events, route, distanceKm);
+}
+
+/**
+ * Append a trust ledger event and compute integrity score.
+ * @param {Object} order - Order object.
+ * @param {string} event - Event label.
+ * @param {string} actorRole - Actor role.
+ * @param {{lat?:number,lng?:number}} coords - Event coordinates.
+ */
+function recordTrustEvent(order, event, actorRole, coords = {}) {
+  if (!order) return;
+  const ledger = loadTrustLedger();
+  const entry = {
+    id: uid(),
+    orderId: order.id,
+    event,
+    ts: ts(),
+    lat: typeof coords.lat === 'number' ? coords.lat : null,
+    lng: typeof coords.lng === 'number' ? coords.lng : null,
+    actorRole,
+    actorId: SESSION.id,
+    trustScore: 0,
+    hash: generateLedgerHash()
+  };
+  const nextLedger = [...ledger, entry];
+  const route = getOrderRouteEndpoints(order);
+  const orderEvents = nextLedger.filter(e => e.orderId === order.id);
+  const integrity = TrustProtocol.calculateIntegrityScore(orderEvents, route, distanceKm);
+  entry.trustScore = integrity.score;
+  saveTrustLedger(nextLedger);
+}
+
+/**
+ * Compute a public trust index from ledger events.
+ * @returns {{score:number, label:string, anomalyRate:number, orderCount:number}}
+ */
+function getTrustIndex() {
+  const ledger = loadTrustLedger();
+  if (!ledger.length) return { score: 96, label: 'Stable', anomalyRate: 0, orderCount: 0 };
+
+  const orderIds = Array.from(new Set(ledger.map(e => e.orderId)));
+  const scores = orderIds.map(id => {
+    const order = getOrder(id);
+    if (!order) return 90;
+    return getOrderIntegrity(order).score;
+  });
+  const avg = Math.round(scores.reduce((s, n) => s + n, 0) / Math.max(scores.length, 1));
+  const anomalyCount = orderIds.filter(id => {
+    const order = getOrder(id);
+    if (!order) return false;
+    const integrity = getOrderIntegrity(order);
+    return integrity.anomalies.timeGap || integrity.anomalies.routeDeviation;
+  }).length;
+  const anomalyRate = orderIds.length ? Math.round((anomalyCount / orderIds.length) * 100) : 0;
+  const label = avg >= 90 ? 'Pristine' : avg >= 75 ? 'Stable' : avg >= 60 ? 'Watch' : 'Risk';
+  return { score: avg, label, anomalyRate, orderCount: orderIds.length };
+}
+
+/**
+ * Render a trust index summary card.
+ * @returns {string} HTML string.
+ */
+function renderTrustIndexCard() {
+  const { score, label, anomalyRate, orderCount } = getTrustIndex();
+  if (!orderCount) {
+    return renderEmptyStateCard({
+      icon: '🛡️',
+      title: 'Public Trust Index',
+      description: 'No verified orders have been recorded yet.',
+      subtext: 'Integrity scoring will appear once dispatch events are written to the ledger.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
+  }
+  const badgeClass = score >= 90 ? 'badge-green' : score >= 75 ? 'badge-blue' : score >= 60 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card trust-index-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Public Trust Index</div>
+          <div style="font-size:20px; font-weight:800; margin-top:4px;">${score}/100</div>
+        </div>
+        <span class="badge ${badgeClass}">${label}</span>
+      </div>
+      <div class="trust-index-bar"><span style="width:${score}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${orderCount} verified order${orderCount === 1 ? '' : 's'}</div>
+        <div>${anomalyRate}% anomaly rate</div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Load ESG alerts from localStorage.
+ * @returns {Array<Object>} Alerts array.
+ */
+function loadEsgAlerts() {
+  try {
+    const raw = window.localStorage.getItem(ESG_ALERTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save ESG alerts to localStorage.
+ * @param {Array<Object>} alerts - Alerts to save.
+ */
+function saveEsgAlerts(alerts) {
+  try {
+    window.localStorage.setItem(ESG_ALERTS_KEY, JSON.stringify(alerts));
+    ReGenXRealtime?.syncRawKey(ESG_ALERTS_KEY, alerts, { eventType: 'KPI_UPDATED', rooms: ['network_room', 'providers_room', 'riders_room', 'plants_room'] });
+  } catch { /* ignore */ }
+}
+
+/**
+ * Append a new ESG alert.
+ * @param {Object} alert - Alert payload.
+ */
+function addEsgAlert(alert) {
+  const alerts = loadEsgAlerts();
+  alerts.push(alert);
+  saveEsgAlerts(alerts);
+}
+
+/**
+ * Resolve an ESG alert by id.
+ * @param {string} id - Alert id.
+ */
+window.resolveEsgAlert = function(id) {
+  const alerts = loadEsgAlerts();
+  const target = alerts.find(a => a.id === id);
+  if (target) target.resolved = true;
+  saveEsgAlerts(alerts);
+  refreshCurrentView(true);
+}
+
+/**
+ * Clear all ESG alerts.
+ */
+window.clearEsgAlerts = function() {
+  if (!confirm('Clear all compliance alerts?')) return;
+  saveEsgAlerts([]);
+  refreshCurrentView(true);
+}
+
+/**
+ * Create compliance alerts for a completed order.
+ * @param {Object} order - Completed order.
+ */
+function addEsgAlertsForOrder(order) {
+  if (!order) return;
+  const alerts = [];
+  const expected = parseFloat(order.kg || 0);
+  const actual = parseFloat(order.actualKg || 0);
+  const diffRatio = expected ? Math.abs(actual - expected) / expected : 0;
+
+  if (expected && actual && diffRatio > 0.25) {
+    alerts.push({
+      id: 'alert-' + uid(),
+      orderId: order.id,
+      type: 'weight_mismatch',
+      severity: 'high',
+      message: `Weight variance ${Math.round(diffRatio * 100)}% exceeds compliance threshold.`,
+      ts: ts(),
+      resolved: false
+    });
+  }
+
+  if (parseFloat(order.segScore || 0) > 0 && parseFloat(order.segScore || 0) < 60) {
+    alerts.push({
+      id: 'alert-' + uid(),
+      orderId: order.id,
+      type: 'low_segregation',
+      severity: 'medium',
+      message: 'Segregation score below 60 may impact ESG certification.',
+      ts: ts(),
+      resolved: false
+    });
+  }
+
+  const integrity = getOrderIntegrity(order);
+  if (integrity.score < 60) {
+    alerts.push({
+      id: 'alert-' + uid(),
+      orderId: order.id,
+      type: 'integrity_risk',
+      severity: 'high',
+      message: 'Integrity score below 60 suggests custody or route anomaly.',
+      ts: ts(),
+      resolved: false
+    });
+  }
+
+  alerts.forEach(addEsgAlert);
+}
+
+/**
+ * Render a compact compliance radar widget.
+ * @returns {string} HTML string.
+ */
+function renderComplianceWidget() {
+  const alerts = loadEsgAlerts().filter(a => !a.resolved).sort((a, b) => b.ts - a.ts);
+  const items = alerts.slice(0, 3).map(a => `
+    <div class="compliance-item">
+      <div>
+        <div class="compliance-title">${a.message}</div>
+        <div class="compliance-sub">Order #${a.orderId.slice(-6).toUpperCase()} · ${fmtDate(a.ts)}</div>
+      </div>
+      <span class="badge ${a.severity === 'high' ? 'badge-red' : 'badge-amber'}">${a.severity.toUpperCase()}</span>
+    </div>
+  `).join('');
+
+  return `
+    <div class="glass-card compliance-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Compliance Radar</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${alerts.length} active alert${alerts.length === 1 ? '' : 's'}</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-compliance')">Open →</button>
+      </div>
+      ${alerts.length ? items : renderDashboardListState({
+        icon: '🧭',
+        title: 'No compliance alerts',
+        description: 'The ESG monitor has not detected any open alerts.',
+        subtext: 'Resolved alerts remain available in the audit history.',
+        statusLabel: 'Idle',
+        tone: 'inactive'
+      })}
+    </div>
+  `;
+}
+
+/**
+ * Load credit ledger entries from localStorage.
+ * @returns {Array<Object>} Ledger entries.
+ */
+function loadCreditLedger() {
+  try {
+    const raw = window.localStorage.getItem(CREDIT_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save credit ledger entries to localStorage.
+ * @param {Array<Object>} entries - Ledger entries.
+ */
+function saveCreditLedger(entries) {
+  try {
+    window.localStorage.setItem(CREDIT_LEDGER_KEY, JSON.stringify(entries));
+    ReGenXRealtime?.syncRawKey(CREDIT_LEDGER_KEY, entries, { eventType: 'KPI_UPDATED', rooms: ['network_room', 'providers_room'] });
+  } catch { /* ignore */ }
+}
+
+/**
+ * Add a credit ledger entry.
+ * @param {Object} entry - Ledger entry.
+ */
+function addCreditEntry(entry) {
+  const entries = loadCreditLedger();
+  entries.push(entry);
+  saveCreditLedger(entries);
+}
+
+/**
+ * Compute reconciliation status.
+ * @returns {{total:number, mismatches:number, score:number}}
+ */
+function getReconciliationSummary() {
+  const entries = loadCreditLedger();
+  if (!entries.length) return { total: 0, mismatches: 0, score: 100 };
+  const mismatches = entries.filter(e => e.deltaPct >= 8).length;
+  const score = Math.max(0, Math.round(100 - (mismatches / entries.length) * 100));
+  return { total: entries.length, mismatches, score };
+}
+
+/**
+ * Render a reconciliation widget.
+ * @returns {string} HTML string.
+ */
+function renderReconciliationWidget() {
+  const summary = getReconciliationSummary();
+  if (!summary.total) {
+    return renderEmptyStateCard({
+      icon: '🧮',
+      title: 'Carbon Credit Reconciliation',
+      description: 'No ledger entries are available yet.',
+      subtext: 'Minted credits and mismatch checks will appear after the first verified dispatch.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
+  }
+  const badgeClass = summary.score >= 90 ? 'badge-green' : summary.score >= 75 ? 'badge-blue' : summary.score >= 60 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card reconciliation-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Carbon Credit Reconciliation</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.score}% Integrity</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.mismatches} mismatch${summary.mismatches === 1 ? '' : 'es'}</span>
+      </div>
+      <div class="reconciliation-bar"><span style="width:${summary.score}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.total} ledger entries</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-reconciliation')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Load SLA ledger entries from localStorage.
+ * @returns {Array<Object>} SLA entries.
+ */
+function loadSlaLedger() {
+  try {
+    const raw = window.localStorage.getItem(SLA_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save SLA ledger entries to localStorage.
+ * @param {Array<Object>} entries - SLA entries.
+ */
+function saveSlaLedger(entries) {
+  try {
+    window.localStorage.setItem(SLA_LEDGER_KEY, JSON.stringify(entries));
+    ReGenXRealtime?.syncRawKey(SLA_LEDGER_KEY, entries, { eventType: 'KPI_UPDATED', rooms: ['network_room', 'providers_room', 'riders_room', 'plants_room'] });
+  } catch { /* ignore */ }
+}
+
+/**
+ * Add a new SLA entry for a dispatch.
+ * @param {Object} order - Order object.
+ */
+function addSlaEntry(order) {
+  if (!order) return;
+  const entries = loadSlaLedger();
+  entries.push({
+    id: 'sla-' + uid(),
+    orderId: order.id,
+    org: order.providerOrg,
+    createdTs: order.ts,
+    targetMins: 90,
+    status: 'pending',
+    pickupTs: null,
+    completeTs: null,
+    deltaMins: null,
+    breach: false
+  });
+  saveSlaLedger(entries);
+}
+
+/**
+ * Update an SLA entry by order id.
+ * @param {string} orderId - Order id.
+ * @param {Object} patch - Partial entry fields.
+ */
+function updateSlaEntry(orderId, patch) {
+  const entries = loadSlaLedger();
+  const entry = entries.find(e => e.orderId === orderId);
+  if (!entry) return;
+  Object.assign(entry, patch);
+  if (entry.completeTs) {
+    const delta = (entry.completeTs - entry.createdTs) / 60000;
+    entry.deltaMins = Math.round(delta);
+    entry.breach = delta > entry.targetMins;
+    entry.status = 'completed';
+  }
+  saveSlaLedger(entries);
+}
+
+/**
+ * Calculate SLA summary stats.
+ * @returns {{total:number, breaches:number, open:number, score:number}}
+ */
+function getSlaSummary() {
+  const entries = loadSlaLedger();
+  const total = entries.length;
+  const breaches = entries.filter(e => e.breach).length;
+  const open = entries.filter(e => !e.completeTs).length;
+  const score = total ? Math.max(0, Math.round(100 - (breaches / total) * 100)) : 100;
+  return { total, breaches, open, score };
+}
+
+/**
+ * Render SLA widget.
+ * @returns {string} HTML string.
+ */
+function renderSlaWidget() {
+  const summary = getSlaSummary();
+  const badgeClass = summary.score >= 90 ? 'badge-green' : summary.score >= 75 ? 'badge-blue' : summary.score >= 60 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card sla-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Dispatch SLA Monitor</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.score}% On-Time</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.breaches} breach${summary.breaches === 1 ? '' : 'es'}</span>
+      </div>
+      <div class="sla-bar"><span style="width:${summary.score}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.open} active dispatch${summary.open === 1 ? '' : 'es'}</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-sla')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Load energy ledger entries from localStorage.
+ * @returns {Array<Object>} Energy ledger entries.
+ */
+function loadEnergyLedger() {
+  try {
+    const raw = window.localStorage.getItem(ENERGY_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save energy ledger entries to localStorage.
+ * @param {Array<Object>} entries - Energy entries.
+ */
+function saveEnergyLedger(entries) {
+  try {
+    window.localStorage.setItem(ENERGY_LEDGER_KEY, JSON.stringify(entries));
+    ReGenXRealtime?.syncRawKey(ENERGY_LEDGER_KEY, entries, { eventType: 'KPI_UPDATED', rooms: ['network_room', 'providers_room', 'plants_room'] });
+  } catch { /* ignore */ }
+}
+
+/**
+ * Add a new energy ledger entry.
+ * @param {Object} entry - Energy entry.
+ */
+function addEnergyEntry(entry) {
+  const entries = loadEnergyLedger();
+  entries.push(entry);
+  saveEnergyLedger(entries);
+}
+
+/**
+ * Summarize energy ledger performance.
+ * @returns {{total:number, avgScore:number, totalEnergy:number}}
+ */
+function getEnergySummary() {
+  const entries = loadEnergyLedger();
+  if (!entries.length) return { total: 0, avgScore: 0, totalEnergy: 0 };
+  const avgScore = Math.round(entries.reduce((s, e) => s + e.score, 0) / entries.length);
+  const totalEnergy = entries.reduce((s, e) => s + e.energyKwh, 0);
+  return { total: entries.length, avgScore, totalEnergy: Math.round(totalEnergy) };
+}
+
+/**
+ * Render energy yield scorecard widget.
+ * @returns {string} HTML string.
+ */
+function renderEnergyWidget() {
+  const summary = getEnergySummary();
+  const badgeClass = summary.avgScore >= 85 ? 'badge-green' : summary.avgScore >= 70 ? 'badge-blue' : summary.avgScore >= 55 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card energy-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Energy Yield Scorecard</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.avgScore || '--'} / 100</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.totalEnergy} kWh</span>
+      </div>
+      <div class="energy-bar"><span style="width:${summary.avgScore}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.total} batches scored</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-energy')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Load sensor reliability snapshots.
+ * @returns {Array<Object>} Sensor snapshots.
+ */
+function loadSensorLedger() {
+  try {
+    const raw = window.localStorage.getItem(SENSOR_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save sensor reliability snapshots.
+ * @param {Array<Object>} entries - Sensor snapshots.
+ */
+function saveSensorLedger(entries) {
+  try { window.localStorage.setItem(SENSOR_LEDGER_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+}
+
+/**
+ * Add a new sensor reliability snapshot.
+ * @param {Object} snapshot - Snapshot payload.
+ */
+function addSensorSnapshot(snapshot) {
+  const entries = loadSensorLedger();
+  entries.push(snapshot);
+  saveSensorLedger(entries.slice(-50));
+}
+
+/**
+ * Calculate sensor reliability summary.
+ * @returns {{score:number, offlineCount:number, total:number}}
+ */
+function getSensorReliabilitySummary() {
+  const bins = getIoTBins();
+  const total = bins.length;
+  if (!total) return { score: 100, offlineCount: 0, staleCount: 0, total: 0 };
+  const offlineCount = bins.filter(b => b.status === 'offline').length;
+  const staleCount = bins.filter(b => b.lastReading && (Date.now() - b.lastReading) > 600000).length;
+  const score = Math.max(0, Math.round(100 - ((offlineCount + staleCount) / total) * 100));
+  return { score, offlineCount, staleCount, total };
+}
+
+/**
+ * Render sensor reliability widget.
+ * @returns {string} HTML string.
+ */
+function renderSensorWidget() {
+  const summary = getSensorReliabilitySummary();
+  const badgeClass = summary.score >= 90 ? 'badge-green' : summary.score >= 75 ? 'badge-blue' : summary.score >= 60 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card sensor-reliability-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Sensor Reliability Index</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.score}% Network Health</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.offlineCount} offline</span>
+      </div>
+      <div class="sensor-reliability-bar"><span style="width:${summary.score}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.total} sensors monitored</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-sensor')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Load emissions ledger entries.
+ * @returns {Array<Object>} Emissions entries.
+ */
+function loadEmissionsLedger() {
+  try {
+    const raw = window.localStorage.getItem(EMISSIONS_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save emissions ledger entries.
+ * @param {Array<Object>} entries - Emissions entries.
+ */
+function saveEmissionsLedger(entries) {
+  try { window.localStorage.setItem(EMISSIONS_LEDGER_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+}
+
+/**
+ * Add a new emissions ledger entry.
+ * @param {Object} entry - Emissions entry.
+ */
+function addEmissionsEntry(entry) {
+  const entries = loadEmissionsLedger();
+  entries.push(entry);
+  saveEmissionsLedger(entries);
+}
+
+/**
+ * Summarize emissions ledger.
+ * @returns {{total:number, totalEmissions:number, totalOffset:number, avgScore:number}}
+ */
+function getEmissionsSummary() {
+  const entries = loadEmissionsLedger();
+  if (!entries.length) return { total: 0, totalEmissions: 0, totalOffset: 0, avgScore: 0 };
+  const totalEmissions = entries.reduce((s, e) => s + e.emissionKg, 0);
+  const totalOffset = entries.reduce((s, e) => s + e.offsetKg, 0);
+  const avgScore = Math.round(entries.reduce((s, e) => s + e.score, 0) / entries.length);
+  return { total: entries.length, totalEmissions: Math.round(totalEmissions), totalOffset: Math.round(totalOffset), avgScore };
+}
+
+/**
+ * Render emissions tracker widget.
+ * @returns {string} HTML string.
+ */
+function renderEmissionsWidget() {
+  const summary = getEmissionsSummary();
+  const badgeClass = summary.avgScore >= 85 ? 'badge-green' : summary.avgScore >= 70 ? 'badge-blue' : summary.avgScore >= 55 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card emissions-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Route Emissions Tracker</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.avgScore || '--'} / 100</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.totalEmissions} kg CO₂</span>
+      </div>
+      <div class="emissions-bar"><span style="width:${summary.avgScore}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.totalOffset} kg offset</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-emissions')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Load compost quality ledger entries.
+ * @returns {Array<Object>} Quality entries.
+ */
+function loadQualityLedger() {
+  try {
+    const raw = window.localStorage.getItem(QUALITY_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save compost quality ledger entries.
+ * @param {Array<Object>} entries - Quality entries.
+ */
+function saveQualityLedger(entries) {
+  try { window.localStorage.setItem(QUALITY_LEDGER_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+}
+
+/**
+ * Add a compost quality ledger entry.
+ * @param {Object} entry - Quality entry.
+ */
+function addQualityEntry(entry) {
+  const entries = loadQualityLedger();
+  entries.push(entry);
+  saveQualityLedger(entries);
+}
+
+/**
+ * Summarize compost quality metrics.
+ * @returns {{total:number, avgScore:number, lowCount:number}}
+ */
+function getQualitySummary() {
+  const entries = loadQualityLedger();
+  if (!entries.length) return { total: 0, avgScore: 0, lowCount: 0 };
+  const avgScore = Math.round(entries.reduce((s, e) => s + e.score, 0) / entries.length);
+  const lowCount = entries.filter(e => e.score < 60).length;
+  return { total: entries.length, avgScore, lowCount };
+}
+
+/**
+ * Render compost quality widget.
+ * @returns {string} HTML string.
+ */
+function renderQualityWidget() {
+  const summary = getQualitySummary();
+  const badgeClass = summary.avgScore >= 85 ? 'badge-green' : summary.avgScore >= 70 ? 'badge-blue' : summary.avgScore >= 55 ? 'badge-amber' : 'badge-red';
+  return `
+    <div class="glass-card quality-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Compost Quality Index</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.avgScore || '--'} / 100</div>
+        </div>
+        <span class="badge ${badgeClass}">${summary.lowCount} low</span>
+      </div>
+      <div class="quality-bar"><span style="width:${summary.avgScore}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.total} batches graded</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-quality')">Open →</button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Load automation pipeline tasks.
+ * @returns {Array<Object>} Pipeline tasks.
+ */
+function loadAutomationPipeline() {
+  try {
+    const raw = window.localStorage.getItem(AUTOMATION_PIPELINE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save automation pipeline tasks.
+ * @param {Array<Object>} tasks - Pipeline tasks.
+ */
+function saveAutomationPipeline(tasks) {
+  try { window.localStorage.setItem(AUTOMATION_PIPELINE_KEY, JSON.stringify(tasks)); } catch { /* ignore */ }
+}
+
+/**
+ * Seed default automation tasks for the admin pipeline.
+ * @returns {Array<Object>} Seeded tasks.
+ */
+function seedAutomationPipeline() {
+  const existing = loadAutomationPipeline();
+  if (existing.length) return existing;
+  const tasks = [
+    { id: 'auto-' + uid(), title: 'Triage new issues', owner: 'Unassigned', status: 'queued', priority: 'high', ts: ts() },
+    { id: 'auto-' + uid(), title: 'Assign reviewers to PRs', owner: 'Unassigned', status: 'queued', priority: 'medium', ts: ts() },
+    { id: 'auto-' + uid(), title: 'Label GSSoC issues', owner: 'Unassigned', status: 'queued', priority: 'high', ts: ts() },
+    { id: 'auto-' + uid(), title: 'Update project board', owner: 'Unassigned', status: 'queued', priority: 'low', ts: ts() }
+  ];
+  saveAutomationPipeline(tasks);
+  return tasks;
+}
+
+/**
+ * Update a pipeline task.
+ * @param {string} id - Task id.
+ * @param {Object} patch - Partial task fields.
+ */
+window.updateAutomationTask = function(id, patch) {
+  const tasks = loadAutomationPipeline();
+  const task = tasks.find(t => t.id === id);
+  if (!task) return;
+  Object.assign(task, patch);
+  saveAutomationPipeline(tasks);
+  refreshCurrentView(true);
+}
+
+/**
+ * Auto-assign a queued task to the current user.
+ * @param {string} id - Task id.
+ */
+window.autoAssignTask = function(id) {
+  updateAutomationTask(id, { owner: SESSION.name || 'Admin', status: 'active' });
+}
+
+/**
+ * Auto-assign the next queued task.
+ */
+window.autoAssignNext = function() {
+  const tasks = loadAutomationPipeline();
+  const next = tasks.find(t => t.status === 'queued');
+  if (!next) return showToast('✓ No queued tasks left.');
+  updateAutomationTask(next.id, { owner: SESSION.name || 'Admin', status: 'active' });
+}
+
+/**
+ * Get automation pipeline summary.
+ * @returns {{queued:number, active:number, done:number}}
+ */
+function getAutomationSummary() {
+  const tasks = loadAutomationPipeline();
+  return {
+    queued: tasks.filter(t => t.status === 'queued').length,
+    active: tasks.filter(t => t.status === 'active').length,
+    done: tasks.filter(t => t.status === 'done').length
+  };
+}
+
+/**
+ * Render automation pipeline widget.
+ * @returns {string} HTML string.
+ */
+function renderAutomationWidget() {
+  const summary = getAutomationSummary();
+  return `
+    <div class="glass-card automation-card" style="margin-bottom:24px;">
+      <div class="between" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Open Source Automation</div>
+          <div style="font-size:18px; font-weight:800; margin-top:4px;">${summary.queued} queued</div>
+        </div>
+        <span class="badge badge-blue">Admin Pipeline</span>
+      </div>
+      <div class="automation-bar"><span style="width:${Math.min(100, (summary.done / Math.max(summary.queued + summary.active + summary.done, 1)) * 100)}%;"></span></div>
+      <div class="between" style="margin-top:10px; font-size:12px; color:var(--text-muted);">
+        <div>${summary.active} active · ${summary.done} done</div>
+        <button class="btn btn-ghost btn-sm" onclick="showView('v-automation')">Open →</button>
+      </div>
+    </div>
+  `;
+}
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function ts() { return Date.now(); }
@@ -110,6 +1038,7 @@ window.resetAppData = function() {
     if (k && k.startsWith(STORAGE_KEY_PREFIX)) keysToRemove.push(k);
   }
   keysToRemove.forEach(k => window.localStorage.removeItem(k));
+  ReGenXRealtime?.clearOperationalState(keysToRemove);
   // Also clear theme preference
   window.localStorage.removeItem('regenx-theme');
   // Reload fresh
@@ -127,8 +1056,10 @@ window.fetchWeather = async function(lat, lng) {
 
 // ── STATE ──
 let SESSION = { role: null, name: '', org: '', uid: '', lat: null, lng: null };
+window.SESSION = SESSION;
 let selectedRole = 'provider';
 let currentView = '';
+window.currentView = currentView;
 let rMap = null; // Rider map instance
 let autoRefreshTimer = null;
 
@@ -141,6 +1072,109 @@ window.toggleTheme = function() {
 }
 const savedTheme = window.localStorage.getItem('regenx-theme') || 'light';
 document.documentElement.setAttribute('data-theme', savedTheme);
+
+// ══════════════════════════════════════
+// GOOGLE AUTH
+// ══════════════════════════════════════
+
+window.initGoogleAuth = function () {
+
+  if (!window.google) {
+    console.error("Google SDK not loaded");
+    return;
+  }
+
+  google.accounts.id.initialize({
+
+    client_id:
+      "661991506161-rb6j5n5klovjupfal1ip2qstcu0k366a.apps.googleusercontent.com",
+
+    callback:
+      handleGoogleLogin
+  });
+
+  // RENDER GOOGLE BUTTON
+  google.accounts.id.renderButton(
+
+    document.getElementById(
+      "google-login-btn"
+    ),
+
+    {
+      theme: "outline",
+      size: "large",
+      width: 280
+    }
+  );
+};
+
+function handleGoogleLogin(response) {
+
+  const token =
+    response.credential;
+
+  const payload =
+    JSON.parse(
+      atob(token.split('.')[1])
+    );
+
+  const acc = {
+
+    id: uid(),
+
+    role: "provider",
+
+    name: payload.name,
+
+    org: payload.email,
+
+    email: payload.email,
+
+    avatar: payload.picture,
+
+    lat: 28.5355,
+
+    lng: 77.3910,
+
+    tokens: 0,
+
+    authProvider: "google"
+  };
+
+  // SAVE ACCOUNT
+ const existing = DB
+  .list('acc:')
+  .map(k => DB.get(k))
+  .find(u => u.email === acc.email);
+
+if(existing){
+
+  executeLogin(existing);
+
+}else{
+
+  DB.set('acc:' + acc.id, acc);
+
+  executeLogin(acc);
+}
+
+  // LOGIN DIRECTLY
+  executeLogin(acc);
+
+  showToast(
+    `✓ Welcome ${acc.name}`
+  );
+}
+
+// AUTO LOGIN CHECK
+window.addEventListener("DOMContentLoaded", () => {
+
+  setTimeout(() => {
+
+    initGoogleAuth();
+
+  }, 500);
+});
 
 // ── AUTH & REGISTRATION ──
 window.switchAuthTab = function(tab) {
@@ -378,6 +1412,7 @@ window.fundProject = function() {
 
 function executeLogin(acc) {
   SESSION = acc;
+  window.SESSION = SESSION;
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-shell').classList.add('active');
   
@@ -419,6 +1454,7 @@ function executeLogin(acc) {
   
   buildSidebar();
   autoRefreshTimer = setInterval(() => refreshCurrentView(), 15000);
+  ReGenXRealtime?.setSession(SESSION);
 }
 
 
@@ -431,6 +1467,9 @@ window.doLogout = function() {
   if (plChartInstance) { plChartInstance.destroy(); plChartInstance = null; }
   if (rMap) { rMap.remove(); rMap = null; }
   SESSION = { role: null, name: '', org: '', uid: '', lat: null, lng: null };
+  window.SESSION = SESSION;
+  window.currentView = '';
+  ReGenXRealtime?.setSession(null);
   document.getElementById('app-shell').classList.remove('active');
   document.getElementById('login-screen').style.display = 'flex';
   switchAuthTab('login');
@@ -446,15 +1485,33 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-iot-bins')" id="nav-v-iot-bins"><span class="nav-item-icon">🗑️</span> IoT Sensory Bins <span class="nav-badge" id="iot-alert-badge" style="display:none">!</span></button>
       <button class="nav-item" onclick="showView('v-pv-hist-week')" id="nav-v-pv-hist-week"><span class="nav-item-icon">📅</span> Weekly Records</button>
       <button class="nav-item" onclick="showView('v-pv-hist-month')" id="nav-v-pv-hist-month"><span class="nav-item-icon">🗓️</span> Monthly Records</button>
+      <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
+      <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
+      <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
+      <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
+      <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
+      <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
+      <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
+      <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
       <button class="nav-item" onclick="showView('v-market')" id="nav-v-market"><span class="nav-item-icon">🛒</span> ReGen Exchange</button>
+      <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-pv-dash');
   }
   if (SESSION.role === 'rider') {
     nav.innerHTML = `
       <button class="nav-item active" onclick="showView('v-rd-dash')" id="nav-v-rd-dash"><span class="nav-item-icon">🗺️</span> Active Route</button>
-      <button class="nav-item" onclick="showView('v-rd-jobs')" id="nav-v-rd-jobs"><span class="nav-item-icon">📋</span> Available Jobs <span class="nav-badge" id="rd-badge" style="display:none">0</span></button>
+      <button class="nav-item" onclick="showView('v-rd-jobs')" id="nav-v-rd-jobs"><span class="nav-item-icon">📋</span> Available Jobs <span class="nav-badge" id="rd-badge" style="display:none"></span></button>
       <button class="nav-item" onclick="showView('v-rd-hist')" id="nav-v-rd-hist"><span class="nav-item-icon">✓</span> Completions</button>
+      <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
+      <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
+      <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
+      <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
+      <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
+      <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
+      <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
+      <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
+      <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-rd-dash');
   }
@@ -463,6 +1520,15 @@ function buildSidebar() {
       <button class="nav-item active" onclick="showView('v-pl-dash')" id="nav-v-pl-dash"><span class="nav-item-icon">🏭</span> Operations</button>
       <button class="nav-item" onclick="showView('v-pl-in')" id="nav-v-pl-in"><span class="nav-item-icon">🚚</span> Incoming Flow</button>
       <button class="nav-item" onclick="showView('v-pl-out')" id="nav-v-pl-out"><span class="nav-item-icon">⚗️</span> Log Output</button>
+      <button class="nav-item" onclick="showView('v-compliance')" id="nav-v-compliance"><span class="nav-item-icon">🧭</span> Compliance Center</button>
+      <button class="nav-item" onclick="showView('v-reconciliation')" id="nav-v-reconciliation"><span class="nav-item-icon">🧮</span> Reconciliation</button>
+      <button class="nav-item" onclick="showView('v-sla')" id="nav-v-sla"><span class="nav-item-icon">⏱️</span> SLA Monitor</button>
+      <button class="nav-item" onclick="showView('v-energy')" id="nav-v-energy"><span class="nav-item-icon">⚡</span> Energy Scorecard</button>
+      <button class="nav-item" onclick="showView('v-sensor')" id="nav-v-sensor"><span class="nav-item-icon">📡</span> Sensor Reliability</button>
+      <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
+      <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
+      <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
+      <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
     showView('v-pl-dash');
   }
@@ -470,12 +1536,13 @@ function buildSidebar() {
 
 window.showView = function(viewId) {
   currentView = viewId;
+  window.currentView = currentView;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const btn = document.getElementById('nav-' + viewId);
   if(btn) btn.classList.add('active');
   
   // Set Title
-  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins' };
+  const titleMap = { 'v-iot-bins': 'IoT Sensory Bins', 'v-compliance': 'Compliance Center', 'v-reconciliation': 'Reconciliation', 'v-sla': 'SLA Monitor', 'v-energy': 'Energy Scorecard', 'v-sensor': 'Sensor Reliability', 'v-emissions': 'Emissions Tracker', 'v-quality': 'Quality Index', 'v-automation': 'Automation Pipeline' };
   if(btn) document.getElementById('tb-view-title').textContent = titleMap[viewId] || btn.innerText.replace(/[^a-zA-Z\s]/g, '').trim();
   
   if (window.innerWidth <= 768) toggleSidebar(false);
@@ -496,12 +1563,145 @@ window.toggleSidebar = function(force) {
 function getAllOrders() { return DB.list('ord:').map(k => DB.get(k)).filter(Boolean).sort((a,b)=>b.ts-a.ts); }
 function getOrder(id) { return DB.get('ord:'+id); }
 function saveOrder(o) { 
-  DB.set('ord:'+o.id, o); 
-  if (window.CloudSync && window.CloudSync.isLive) {
-      window.CloudSync.pushDocument('orders', o);
-  }
+  DB.set('ord:'+o.id, o, { rooms: ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room'], eventType: 'KPI_UPDATED' });
 }
 function getAllLogs() { return DB.list('log:').map(k => DB.get(k)).filter(Boolean).sort((a,b)=>b.ts-a.ts); }
+
+function renderStatusBadge(label, tone = 'neutral') {
+  return `<span class="status-badge status-badge-${tone}">${label}</span>`;
+}
+
+function renderLoadingSkeleton(lines = 2) {
+  const bars = Array.from({ length: lines }, (_, index) => {
+    const width = index === 0 ? '68%' : index === lines - 1 ? '52%' : '88%';
+    return `<div class="skeleton-loader" style="width:${width};"></div>`;
+  }).join('');
+  return `
+    <div class="dashboard-state dashboard-state-loading" aria-busy="true">
+      <div class="dashboard-state-head">
+        <div class="dashboard-state-icon">⏳</div>
+        ${renderStatusBadge('Loading', 'loading')}
+      </div>
+      <div class="dashboard-state-skeletons">
+        ${bars}
+      </div>
+    </div>
+  `;
+}
+
+function renderErrorState({ title = 'Operational error', description = 'Unable to load dashboard data.', subtext = 'Check the upstream system and refresh the view.', actionHtml = '' } = {}) {
+  return `
+    <div class="dashboard-state dashboard-state-error">
+      <div class="dashboard-state-head">
+        <div class="dashboard-state-icon">⚠️</div>
+        ${renderStatusBadge('Error', 'error')}
+      </div>
+      <div class="dashboard-state-title">${title}</div>
+      <div class="dashboard-state-desc">${description}</div>
+      ${subtext ? `<div class="dashboard-state-sub">${subtext}</div>` : ''}
+      ${actionHtml ? `<div class="dashboard-state-actions">${actionHtml}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderEmptyStateCard({ icon = '◌', title = 'No data available', description = 'There is no operational data for this widget yet.', subtext = '', statusLabel = 'Idle', tone = 'inactive', actionHtml = '' } = {}) {
+  return `
+    <div class="dashboard-state dashboard-state-empty">
+      <div class="dashboard-state-head">
+        <div class="dashboard-state-icon">${icon}</div>
+        ${renderStatusBadge(statusLabel, tone)}
+      </div>
+      <div class="dashboard-state-title">${title}</div>
+      <div class="dashboard-state-desc">${description}</div>
+      ${subtext ? `<div class="dashboard-state-sub">${subtext}</div>` : ''}
+      ${actionHtml ? `<div class="dashboard-state-actions">${actionHtml}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderMetricCard({ title, value, description = '', status = 'active', icon = '●', statusLabel = 'Active', tone = 'active', accent = '', unit = '', actionHtml = '', trend = null, sparkline = [] } = {}) {
+  if (status === 'loading') return renderLoadingSkeleton(2);
+  if (status === 'error') return renderErrorState({ title, description, subtext: '', actionHtml });
+  if (status === 'empty') {
+    return renderEmptyStateCard({ icon, title, description, statusLabel: 'No data', tone: 'inactive', actionHtml });
+  }
+  if (status === 'inactive') {
+    return renderEmptyStateCard({ icon, title, description, statusLabel, tone: 'inactive', actionHtml });
+  }
+
+  const valueText = value === null || typeof value === 'undefined' ? '—' : value;
+  const style = accent ? ` style="border-top-color:${accent};"` : '';
+  const trendDirection = trend?.direction || 'flat';
+  const trendTone = trendDirection === 'up' ? 'positive' : trendDirection === 'down' ? 'negative' : 'neutral';
+  const trendArrow = trendDirection === 'up' ? '↗' : trendDirection === 'down' ? '↘' : '→';
+  return `
+    <div class="stat-card dashboard-state dashboard-state-active state-${tone}"${style}>
+      <div class="dashboard-state-head">
+        <div class="dashboard-state-icon">${icon}</div>
+        ${renderStatusBadge(statusLabel, tone)}
+      </div>
+      <div class="dashboard-state-body">
+        <div class="metric-hero-row">
+          <div class="metric-hero-value">${valueText}${unit ? `<span class="metric-unit">${unit}</span>` : ''}</div>
+          ${trend ? `<span class="metric-trend metric-trend-${trendTone}"><span>${trendArrow}</span><span>${trend.label || trend.text || ''}</span></span>` : ''}
+        </div>
+        <div class="metric-title">${title}</div>
+        ${description ? `<div class="metric-desc">${description}</div>` : ''}
+      </div>
+      ${sparkline.length ? renderSparkline(sparkline, tone) : ''}
+      ${actionHtml ? `<div class="dashboard-state-actions">${actionHtml}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderMetricGrid(cards = []) {
+  return cards.join('');
+}
+
+function renderDashboardListState({ icon = '◌', title = 'No data available', description = 'This section is empty right now.', subtext = '', statusLabel = 'Idle', tone = 'inactive', actionHtml = '' } = {}) {
+  return renderEmptyStateCard({ icon, title, description, subtext, statusLabel, tone, actionHtml });
+}
+
+function renderSectionPlaceholder({ title = 'Loading data', description = 'Preparing dashboard state…' } = {}) {
+  return `
+    <div class="dashboard-section-placeholder">
+      <div class="dashboard-section-placeholder-title">${title}</div>
+      <div class="dashboard-section-placeholder-body">
+        <div class="skeleton-loader" style="width:72%;"></div>
+        <div class="skeleton-loader" style="width:58%;"></div>
+        <div class="skeleton-loader" style="width:84%;"></div>
+      </div>
+      <div class="dashboard-state-sub">${description}</div>
+    </div>
+  `;
+}
+
+function renderSparkline(values = [], tone = 'active') {
+  if (!values.length) return '';
+  const max = Math.max(...values.map(v => Number(v) || 0), 1);
+  const bars = values.map((value, index) => {
+    const height = Math.max(18, Math.round(((Number(value) || 0) / max) * 100));
+    return `<span class="spark-bar ${index === values.length - 1 ? 'is-last' : ''}" style="height:${height}%;"></span>`;
+  }).join('');
+  return `<div class="metric-sparkline metric-sparkline-${tone}">${bars}</div>`;
+}
+
+function buildStatusStepper(status) {
+  if (status === 'rejected') return '';
+  const steps = [
+    { key: 'requested', label: 'Requested' },
+    { key: 'assigned',  label: 'Assigned'  },
+    { key: 'en_route',  label: 'En Route'  },
+    { key: 'picked_up', label: 'Picked Up' },
+    { key: 'at_plant',  label: 'At Plant'  },
+    { key: 'completed', label: 'Completed' },
+  ];
+  const idx = steps.findIndex(s => s.key === status);
+  return `<div class="order-stepper">${steps.map((s, i) => {
+    const cls = i < idx ? 'done' : i === idx && status !== 'completed' ? 'active' : i <= idx ? 'done' : '';
+    return `<div class="os-step ${cls}"><div class="os-dot"></div><div class="os-label">${s.label}</div></div>`;
+  }).join('')}</div>`;
+}
 
 // Generic Order Card Component
 function buildOrderCard(o, role) {
@@ -514,6 +1714,15 @@ function buildOrderCard(o, role) {
     completed: '<span class="badge" style="background:var(--green);color:white;">Completed</span>',
     rejected: '<span class="badge badge-red">Rejected</span>'
   };
+
+  const integrity = getOrderIntegrity(o);
+  const trustBadge = integrity.score >= 90
+    ? '<span class="badge badge-green">High Integrity</span>'
+    : integrity.score >= 75
+      ? '<span class="badge badge-blue">Verified</span>'
+      : integrity.score >= 60
+        ? '<span class="badge badge-amber">Watch</span>'
+        : '<span class="badge badge-red">Risk</span>';
   
   let acts = '';
   if (role === 'provider' && o.status === 'requested') {
@@ -535,20 +1744,26 @@ function buildOrderCard(o, role) {
     acts = `<button class="btn btn-primary btn-sm" onclick="openPlantConfirm('${o.id}')">Confirm Receipt ✓</button>`;
   }
   if (['provider', 'rider', 'plant'].includes(role) && o.status === 'completed') {
-    acts += `<button class="btn btn-outline-danger btn-sm" onclick="deleteOrder('${o.id}')" style="margin-left:auto;">🗑 Delete Record</button>`;
+    acts += `<button class="btn btn-outline-danger btn-sm" onclick="deleteOrder('${o.id}')">🗑 Delete Record</button>`;
   }
+
+  acts += `<button class="btn btn-ghost btn-sm" onclick="openIntegrityScan('${o.id}')">🛡 Integrity Scan</button>`;
 
   return `
     <div class="order-card" data-status="${o.status}">
       <div class="oc-header">
         <div class="oc-title">${o.providerOrg} <span style="font-size:12px;color:var(--text-muted);font-family:monospace">#${o.id.slice(-6).toUpperCase()}</span></div>
-        <div>${badges[o.status]}</div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          ${badges[o.status]}
+          ${trustBadge}
+        </div>
       </div>
       <div class="oc-meta">
         <div class="oc-meta-item">🗑 ${o.wasteType} (${o.kg}kg)</div>
         <div class="oc-meta-item">🕒 ${o.shift}</div>
         <div class="oc-meta-item">⚗️ Dest: ${o.plantName}</div>
       </div>
+      ${buildStatusStepper(o.status)}
       ${o.actualKg ? `<div style="margin-bottom:8px;font-size:13px;color:var(--green);font-weight:600;">✓ Actual Collected: ${o.actualKg}kg (Quality: ${o.quality})</div>` : ''}
       ${o.tokensMinted ? `<div style="margin-bottom:8px;font-size:13px;color:var(--amber);font-weight:600;">🪙 Minted ${o.tokensMinted} $RGX <span style="font-size:10px; color:var(--text-muted); font-family:monospace; margin-left:8px;">TX: ${o.txHash.slice(0,12)}...</span></div>` : ''}
       ${acts ? `<div class="oc-actions">${acts}</div>` : ''}
@@ -559,6 +1774,42 @@ function buildOrderCard(o, role) {
 // ── REFRESH CONTROLLER ──
 async function refreshCurrentView(fullRender = false) {
   const mc = document.getElementById('main-content');
+  if (currentView === 'v-audit-portal') {
+    AuditPortal.renderPortal(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-compliance') {
+    renderCompliance(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-reconciliation') {
+    renderReconciliation(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-sla') {
+    renderSlaMonitor(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-energy') {
+    renderEnergyScorecard(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-sensor') {
+    renderSensorReliability(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-emissions') {
+    renderEmissionsTracker(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-quality') {
+    renderQualityIndex(mc, fullRender);
+    return;
+  }
+  if (currentView === 'v-automation') {
+    renderAutomationPipeline(mc, fullRender);
+    return;
+  }
   if (currentView === 'v-market') {
     const globalFunded = DB.get('global-fund') || 45200;
     const staked = SESSION.staked || 0;
@@ -632,6 +1883,450 @@ async function refreshCurrentView(fullRender = false) {
   if (SESSION.role === 'plant') await renderPlant(mc, fullRender);
 }
 
+/**
+ * Render compliance center view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderCompliance(mc, fullRender) {
+  const alerts = loadEsgAlerts().sort((a, b) => b.ts - a.ts);
+  const openAlerts = alerts.filter(a => !a.resolved);
+  const resolvedAlerts = alerts.filter(a => a.resolved);
+
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Compliance Center</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Real-time ESG anomalies and audit flags.</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="clearEsgAlerts()">Clear All</button>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${openAlerts.length}</div><div class="stat-lbl">Active Alerts</div></div>
+      <div class="stat-card"><div class="stat-val">${resolvedAlerts.length}</div><div class="stat-lbl">Resolved</div></div>
+      <div class="stat-card"><div class="stat-val">${alerts.length}</div><div class="stat-lbl">Total Flags</div></div>
+      <div class="stat-card"><div class="stat-val">${Math.round((openAlerts.length / Math.max(alerts.length, 1)) * 100)}%</div><div class="stat-lbl">Open Rate</div></div>
+    </div>
+
+    <div class="two-col" style="align-items: stretch;">
+      <div class="glass-card compliance-card">
+        <div class="between" style="margin-bottom:12px;">
+          <h4 style="font-size:16px;">Active Alerts</h4>
+          <span class="badge badge-amber">${openAlerts.length} Open</span>
+        </div>
+        <div class="compliance-list">
+          ${openAlerts.length ? openAlerts.map(a => `
+            <div class="compliance-item">
+              <div>
+                <div class="compliance-title">${a.message}</div>
+                <div class="compliance-sub">Order #${a.orderId.slice(-6).toUpperCase()} · ${fmtDate(a.ts)}</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="badge ${a.severity === 'high' ? 'badge-red' : 'badge-amber'}">${a.severity.toUpperCase()}</span>
+                <button class="btn btn-ghost btn-sm" onclick="resolveEsgAlert('${a.id}')">Resolve</button>
+              </div>
+            </div>
+      `).join('') : renderDashboardListState({
+        icon: '🛡️',
+        title: 'No active alerts',
+        description: 'All compliance checks are clear for now.',
+        subtext: 'New alerts will appear here when issues are detected.',
+        statusLabel: 'Idle',
+        tone: 'inactive'
+      })}
+          <span class="badge badge-green">${resolvedAlerts.length} Done</span>
+        </div>
+        <div class="compliance-list">
+          ${resolvedAlerts.length ? resolvedAlerts.slice(0, 8).map(a => `
+            <div class="compliance-item resolved">
+              <div>
+                <div class="compliance-title">${a.message}</div>
+                <div class="compliance-sub">Order #${a.orderId.slice(-6).toUpperCase()} · ${fmtDate(a.ts)}</div>
+              </div>
+              <span class="badge badge-green">RESOLVED</span>
+            </div>
+          `).join('') : renderDashboardListState({
+            icon: '✅',
+            title: 'No resolved alerts yet',
+            description: 'There are no resolved compliance alerts to display.',
+            subtext: 'Resolved alerts will appear here once issues are closed.',
+            statusLabel: 'Idle',
+            tone: 'inactive'
+          })}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render reconciliation center view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderReconciliation(mc, fullRender) {
+  const entries = loadCreditLedger().sort((a, b) => b.ts - a.ts);
+  const mismatches = entries.filter(e => e.deltaPct >= 8);
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Carbon Credit Reconciliation</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Cross-verify minted credits against expected ESG yields.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${entries.length}</div><div class="stat-lbl">Ledger Entries</div></div>
+      <div class="stat-card" style="border-top-color:var(--amber);"><div class="stat-val">${mismatches.length}</div><div class="stat-lbl">Mismatches</div></div>
+      <div class="stat-card"><div class="stat-val">${getReconciliationSummary().score}%</div><div class="stat-lbl">Integrity Score</div></div>
+      <div class="stat-card"><div class="stat-val">${Math.round((mismatches.length / Math.max(entries.length, 1)) * 100)}%</div><div class="stat-lbl">Mismatch Rate</div></div>
+    </div>
+
+    <div class="glass-card reconciliation-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Ledger Entries</h4>
+        <span class="badge ${mismatches.length ? 'badge-amber' : 'badge-green'}">${mismatches.length} mismatch${mismatches.length === 1 ? '' : 'es'}</span>
+      </div>
+      <div class="reconciliation-list">
+        ${entries.length ? entries.slice(0, 12).map(e => `
+          <div class="reconciliation-item ${e.deltaPct >= 8 ? 'flagged' : ''}">
+            <div>
+              <div class="reconciliation-title">Order #${e.orderId.slice(-6).toUpperCase()} · ${e.org}</div>
+              <div class="reconciliation-sub">Expected ${e.expectedTokens} $RGX · Minted ${e.mintedTokens} $RGX · Δ ${e.deltaPct.toFixed(1)}%</div>
+              <div class="reconciliation-sub">${fmtDate(e.ts)} · Trust ${e.trustScore}%</div>
+            </div>
+            <span class="badge ${e.deltaPct >= 8 ? 'badge-red' : 'badge-green'}">${e.deltaPct >= 8 ? 'FLAG' : 'OK'}</span>
+          </div>
+        `).join('') : renderDashboardListState({
+          icon: '🧾',
+          title: 'No reconciliation entries',
+          description: 'There are no credit ledger entries to review yet.',
+          subtext: 'Recorded carbon credits will populate this list once available.',
+          statusLabel: 'Idle',
+          tone: 'inactive'
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render SLA monitor view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderSlaMonitor(mc, fullRender) {
+  const entries = loadSlaLedger().sort((a, b) => b.createdTs - a.createdTs);
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Dispatch SLA Monitor</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Track pickup and completion SLAs across the network.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().open}</div><div class="stat-lbl">Active</div></div>
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().breaches}</div><div class="stat-lbl">Breaches</div></div>
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().total}</div><div class="stat-lbl">Total</div></div>
+      <div class="stat-card"><div class="stat-val">${getSlaSummary().score}%</div><div class="stat-lbl">On-Time Score</div></div>
+    </div>
+
+    <div class="glass-card sla-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Dispatches</h4>
+        <span class="badge badge-blue">SLA 90 min</span>
+      </div>
+      <div class="sla-list">
+        ${entries.length ? entries.slice(0, 12).map(e => {
+          const elapsed = Math.round(((e.completeTs || Date.now()) - e.createdTs) / 60000);
+          const liveBreach = !e.completeTs && elapsed > e.targetMins;
+          const badge = e.completeTs
+            ? (e.breach ? 'badge-red' : 'badge-green')
+            : liveBreach ? 'badge-amber' : 'badge-blue';
+          const status = e.completeTs
+            ? (e.breach ? 'BREACH' : 'ON TIME')
+            : liveBreach ? 'AT RISK' : 'IN PROGRESS';
+          return `
+            <div class="sla-item ${liveBreach ? 'risk' : ''}">
+              <div>
+                <div class="sla-title">Order #${e.orderId.slice(-6).toUpperCase()} · ${e.org}</div>
+                <div class="sla-sub">Elapsed ${elapsed} min · Target ${e.targetMins} min</div>
+                <div class="sla-sub">Started ${fmtDate(e.createdTs)}</div>
+              </div>
+              <span class="badge ${badge}">${status}</span>
+            </div>
+          `;
+        }).join('') : renderDashboardListState({
+          icon: '⏱️',
+          title: 'No SLA entries yet',
+          description: 'No dispatch SLA records are available right now.',
+          subtext: 'Active and completed dispatch SLAs will appear in this section.',
+          statusLabel: 'Idle',
+          tone: 'inactive'
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render energy yield scorecard view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderEnergyScorecard(mc, fullRender) {
+  const entries = loadEnergyLedger().sort((a, b) => b.ts - a.ts);
+  const summary = getEnergySummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Energy Yield Scorecard</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Track conversion efficiency of processed bio-waste.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.total}</div><div class="stat-lbl">Scored Batches</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.avgScore || 0}</div><div class="stat-lbl">Avg Score</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.totalEnergy}</div><div class="stat-lbl">kWh Generated</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.total ? Math.round(summary.totalEnergy / summary.total) : 0}</div><div class="stat-lbl">kWh / Batch</div></div>
+    </div>
+
+    <div class="glass-card energy-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Batches</h4>
+        <span class="badge badge-blue">Bio-to-Energy</span>
+      </div>
+      <div class="energy-list">
+        ${entries.length ? entries.slice(0, 12).map(e => `
+          <div class="energy-item">
+            <div>
+              <div class="energy-title">${e.org} · ${e.kg} kg processed</div>
+              <div class="energy-sub">${e.energyKwh} kWh · Efficiency ${e.efficiencyPct}% · ${fmtDate(e.ts)}</div>
+            </div>
+            <span class="badge ${e.score >= 85 ? 'badge-green' : e.score >= 70 ? 'badge-blue' : e.score >= 55 ? 'badge-amber' : 'badge-red'}">${e.score}</span>
+          </div>
+        `).join('') : renderDashboardListState({
+          icon: '⚡',
+          title: 'No energy records yet',
+          description: 'Energy yield data will appear once bio-waste batches are processed.',
+          statusLabel: 'Idle',
+          tone: 'inactive'
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render sensor reliability view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderSensorReliability(mc, fullRender) {
+  const entries = loadSensorLedger().sort((a, b) => b.ts - a.ts);
+  const summary = getSensorReliabilitySummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Sensor Reliability Index</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Monitor IoT sensor uptime, freshness, and health.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.total}</div><div class="stat-lbl">Total Sensors</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.offlineCount}</div><div class="stat-lbl">Offline</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.score}%</div><div class="stat-lbl">Reliability</div></div>
+      <div class="stat-card"><div class="stat-val">${entries.length}</div><div class="stat-lbl">Snapshots</div></div>
+    </div>
+
+    <div class="glass-card sensor-reliability-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Health Snapshots</h4>
+        <span class="badge badge-blue">10-min freshness</span>
+      </div>
+      <div class="sensor-reliability-list">
+        ${entries.length ? entries.slice(0, 12).map(e => `
+          <div class="sensor-reliability-item">
+            <div>
+              <div class="sensor-reliability-title">${e.total} sensors · ${e.offlineCount} offline · ${e.staleCount} stale</div>
+              <div class="sensor-reliability-sub">${fmtDate(e.ts)}</div>
+            </div>
+            <span class="badge ${e.score >= 90 ? 'badge-green' : e.score >= 75 ? 'badge-blue' : e.score >= 60 ? 'badge-amber' : 'badge-red'}">${e.score}%</span>
+          </div>
+        `).join('') : renderDashboardListState({
+          icon: '📡',
+          title: 'No sensor snapshots yet',
+          description: 'Sensor health snapshots will appear as devices report data.',
+          statusLabel: 'Idle',
+          tone: 'inactive'
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render emissions tracker view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderEmissionsTracker(mc, fullRender) {
+  const entries = loadEmissionsLedger().sort((a, b) => b.ts - a.ts);
+  const summary = getEmissionsSummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Route Emissions Tracker</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Compare logistics emissions against verified offset impact.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.total}</div><div class="stat-lbl">Tracked Routes</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.totalEmissions}</div><div class="stat-lbl">CO₂ Emitted (kg)</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.totalOffset}</div><div class="stat-lbl">CO₂ Offset (kg)</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.avgScore || 0}</div><div class="stat-lbl">Efficiency Score</div></div>
+    </div>
+
+    <div class="glass-card emissions-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Routes</h4>
+        <span class="badge badge-blue">Logistics Footprint</span>
+      </div>
+      <div class="emissions-list">
+        ${entries.length ? entries.slice(0, 12).map(e => `
+          <div class="emissions-item">
+            <div>
+              <div class="emissions-title">${e.org} · ${e.distanceKm} km</div>
+              <div class="emissions-sub">${e.emissionKg} kg emitted · ${e.offsetKg} kg offset · ${fmtDate(e.ts)}</div>
+            </div>
+            <span class="badge ${e.score >= 85 ? 'badge-green' : e.score >= 70 ? 'badge-blue' : e.score >= 55 ? 'badge-amber' : 'badge-red'}">${e.score}</span>
+          </div>
+        `).join('') : renderDashboardListState({
+          icon: '🌍',
+          title: 'No emissions records yet',
+          description: 'Tracked emissions routes will appear here after the first runs.',
+          statusLabel: 'Idle',
+          tone: 'inactive'
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render compost quality index view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderQualityIndex(mc, fullRender) {
+  const entries = loadQualityLedger().sort((a, b) => b.ts - a.ts);
+  const summary = getQualitySummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Compost Quality Index</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Track segregation scores and compost quality outcomes.</div>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.total}</div><div class="stat-lbl">Graded Batches</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.avgScore || 0}</div><div class="stat-lbl">Avg Score</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.lowCount}</div><div class="stat-lbl">Low Quality</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.total ? Math.round((summary.lowCount / summary.total) * 100) : 0}%</div><div class="stat-lbl">Low Rate</div></div>
+    </div>
+
+    <div class="glass-card quality-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Recent Batches</h4>
+        <span class="badge badge-blue">Segregation Score</span>
+      </div>
+      <div class="quality-list">
+        ${entries.length ? entries.slice(0, 12).map(e => `
+          <div class="quality-item">
+            <div>
+              <div class="quality-title">${e.org} · ${e.kg} kg processed</div>
+              <div class="quality-sub">Score ${e.score} · Seg ${e.segScore}% · ${fmtDate(e.ts)}</div>
+            </div>
+            <span class="badge ${e.score >= 85 ? 'badge-green' : e.score >= 70 ? 'badge-blue' : e.score >= 55 ? 'badge-amber' : 'badge-red'}">${e.score}</span>
+          </div>
+        `).join('') : '<div class="empty-state">No quality records yet.</div>'}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render automation pipeline view.
+ * @param {HTMLElement} mc - Main content container.
+ * @param {boolean} fullRender - Whether to fully render.
+ */
+function renderAutomationPipeline(mc, fullRender) {
+  const tasks = seedAutomationPipeline().sort((a, b) => b.ts - a.ts);
+  const summary = getAutomationSummary();
+  if (!fullRender) return;
+
+  mc.innerHTML = `
+    <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h3 class="heading">Automation Pipeline</h3>
+        <div style="font-size:13px; color:var(--text-muted);">Streamline open-source operations with smart task assignment.</div>
+      </div>
+      <button class="btn btn-primary" onclick="autoAssignNext()">⚙️ Auto-Assign Next</button>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-val">${summary.queued}</div><div class="stat-lbl">Queued</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.active}</div><div class="stat-lbl">Active</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.done}</div><div class="stat-lbl">Done</div></div>
+      <div class="stat-card"><div class="stat-val">${summary.queued + summary.active + summary.done}</div><div class="stat-lbl">Total</div></div>
+    </div>
+
+    <div class="glass-card automation-card">
+      <div class="between" style="margin-bottom:12px;">
+        <h4 style="font-size:16px;">Task Queue</h4>
+        <span class="badge badge-blue">Automation Ops</span>
+      </div>
+      <div class="automation-list">
+        ${tasks.length ? tasks.map(t => `
+          <div class="automation-item">
+            <div>
+              <div class="automation-title">${t.title}</div>
+              <div class="automation-sub">${t.owner} · ${t.priority.toUpperCase()} · ${fmtDate(t.ts)}</div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span class="badge ${t.status === 'done' ? 'badge-green' : t.status === 'active' ? 'badge-amber' : 'badge-blue'}">${t.status.toUpperCase()}</span>
+              ${t.status === 'queued' ? `<button class="btn btn-ghost btn-sm" onclick="autoAssignTask('${t.id}')">Assign</button>` : ''}
+              ${t.status !== 'done' ? `<button class="btn btn-ghost btn-sm" onclick="updateAutomationTask('${t.id}', { status: 'done' })">Done</button>` : ''}
+            </div>
+          </div>
+        `).join('') : '<div class="empty-state">No automation tasks queued.</div>'}
+      </div>
+    </div>
+  `;
+}
+
 // ════════ PROVIDER LOGIC ════════
 async function renderProvider(mc, fullRender) {
   const orders = getAllOrders().filter(o => o.providerId === SESSION.id);
@@ -651,6 +2346,15 @@ async function renderProvider(mc, fullRender) {
       </div>
 
       <div class="stats-grid" id="pv-stats"></div>
+      ${renderTrustIndexCard()}
+      ${renderComplianceWidget()}
+      ${renderReconciliationWidget()}
+      ${renderSlaWidget()}
+      ${renderEnergyWidget()}
+      ${renderSensorWidget()}
+      ${renderEmissionsWidget()}
+      ${renderQualityWidget()}
+      ${renderAutomationWidget()}
       <div class="two-col">
         <div>
           <h3 class="heading" style="margin-bottom:16px;">Active Dispatches</h3><div id="pv-act"></div>
@@ -684,7 +2388,7 @@ async function renderProvider(mc, fullRender) {
                <div id="pv-trust-rank-icon" style="font-size:42px;">🥉</div>
                <div style="text-align:right;">
                   <div style="font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Reputation Score</div>
-                  <div style="font-size:28px; font-weight:800; color:var(--blue);" id="pv-trust-score">0</div>
+                  <div style="font-size:28px; font-weight:800; color:var(--blue);" id="pv-trust-score">—</div>
                </div>
             </div>
             <div style="height:8px; background:rgba(0,0,0,0.1); border-radius:4px; overflow:hidden; margin-bottom:12px;">
@@ -789,20 +2493,62 @@ async function renderProvider(mc, fullRender) {
     if(statsDiv) {
       const bins = getIoTBins();
       const critCount = bins.filter(b => b.fill >= 85).length;
-      statsDiv.innerHTML = `
-        <div class="stat-card"><div class="stat-val">${orders.length}</div><div class="stat-lbl">Total Requests</div></div>
-        <div class="stat-card"><div class="stat-val">${totalKg}</div><div class="stat-lbl">Kg Recycled</div></div>
-        <div class="stat-card"><div class="stat-val">${Math.round(totalKg*0.62)}</div><div class="stat-lbl">CO₂ Offset (kg)</div></div>
-        <div class="stat-card" style="border-top-color:${critCount > 0 ? 'var(--red)' : 'var(--green)'};cursor:pointer;" onclick="showView('v-iot-bins')">
-          <div class="stat-val" style="color:${critCount > 0 ? 'var(--red)' : 'var(--green)'}">${critCount}</div>
-          <div class="stat-lbl">Bins Critical</div>
-        </div>
-      `;
+      const requestState = orders.length ? 'active' : 'empty';
+      const kgState = orders.length ? 'active' : 'empty';
+      const offsetState = orders.length ? 'active' : 'empty';
+      const binState = bins.length ? (critCount > 0 ? 'active' : 'inactive') : 'empty';
+      statsDiv.innerHTML = renderMetricGrid([
+        renderMetricCard({
+          title: 'Total Requests',
+          value: orders.length,
+          description: orders.length ? 'Dispatch requests tracked in the system.' : 'No dispatch requests have been created yet.',
+          status: requestState === 'empty' ? 'empty' : 'active',
+          icon: '📦',
+          statusLabel: requestState === 'empty' ? 'No data' : 'Active',
+          tone: requestState === 'empty' ? 'inactive' : 'active'
+        }),
+        renderMetricCard({
+          title: 'Kg Recycled',
+          value: orders.length ? totalKg : null,
+          description: orders.length ? 'Recovered material captured from completed loads.' : 'No material has been processed yet.',
+          status: kgState === 'empty' ? 'empty' : 'active',
+          icon: '♻️',
+          statusLabel: kgState === 'empty' ? 'No data' : 'Active',
+          tone: kgState === 'empty' ? 'inactive' : 'active'
+        }),
+        renderMetricCard({
+          title: 'CO₂ Offset (kg)',
+          value: orders.length ? Math.round(totalKg * 0.62) : null,
+          description: orders.length ? 'Estimated emissions avoided from recovered waste.' : 'No offset can be calculated until loads are processed.',
+          status: offsetState === 'empty' ? 'empty' : 'active',
+          icon: '🌍',
+          statusLabel: offsetState === 'empty' ? 'No data' : 'Active',
+          tone: offsetState === 'empty' ? 'inactive' : 'active'
+        }),
+        renderMetricCard({
+          title: 'Bins Critical',
+          value: bins.length ? critCount : null,
+          description: bins.length ? 'Connected bins above the critical fill threshold.' : 'No IoT bins are connected yet.',
+          status: binState === 'empty' ? 'empty' : critCount > 0 ? 'active' : 'inactive',
+          icon: '🗑️',
+          statusLabel: binState === 'empty' ? 'No data' : critCount > 0 ? 'Warning' : 'Idle',
+          tone: binState === 'empty' ? 'inactive' : critCount > 0 ? 'warning' : 'inactive',
+          accent: critCount > 0 ? 'var(--red)' : 'var(--green)',
+          actionHtml: '<button class="btn btn-ghost btn-sm" onclick="showView(\'v-iot-bins\')">Open bins</button>'
+        })
+      ]);
     }
     const pvMyKg = document.getElementById('pv-my-kg');
     if(pvMyKg) pvMyKg.textContent = totalKg + ' kg';
     const pvActDiv = document.getElementById('pv-act');
-    if(pvActDiv) pvActDiv.innerHTML = active.length ? active.map(o=>buildOrderCard(o,'provider')).join('') : '<div class="empty-state"><div class="empty-sub">No active dispatches.</div></div>';
+    if(pvActDiv) pvActDiv.innerHTML = active.length ? active.map(o=>buildOrderCard(o,'provider')).join('') : renderDashboardListState({
+      icon: '🚚',
+      title: 'No active dispatches',
+      description: 'There are no in-flight provider orders right now.',
+      subtext: 'Create a dispatch request to populate this section.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
 
     if(fullRender) setTimeout(initPvChart, 100);
 
@@ -875,17 +2621,28 @@ async function renderProvider(mc, fullRender) {
   if (currentView === 'v-pv-hist-week' || currentView === 'v-pv-hist-month') {
     const isMonth = currentView === 'v-pv-hist-month';
     const limitDays = isMonth ? 30 : 7;
+
     const now = Date.now();
+    const completed = getAllOrders().filter(o => o.providerId === SESSION.id && o.status === 'completed');
     const filteredHistory = completed.filter(o => (now - o.ts) <= (limitDays * 24 * 60 * 60 * 1000));
     
     if(fullRender) mc.innerHTML = `
-      <div class="between" style="margin-bottom:24px;">
-         <h3 class="heading" style="margin-bottom:0;">${isMonth ? 'Monthly' : 'Weekly'} Records</h3>
-         ${filteredHistory.length ? `<button class="btn btn-outline-danger btn-sm" onclick="clearAllHistory('provider')">🗑 Clear All History</button>` : ''}
-      </div>
-      <div id="pv-hist-list"></div>
+      <section class="records-shell" aria-label="${isMonth ? 'Monthly' : 'Weekly'} records">
+        <div class="between records-header">
+           <h3 class="heading" style="margin-bottom:0;">${isMonth ? 'Monthly' : 'Weekly'} Records</h3>
+           ${filteredHistory.length ? `<div class="records-tools"><button class="btn btn-outline-danger btn-sm" onclick="clearAllHistory('provider')">🗑 Clear All History</button></div>` : ''}
+        </div>
+        <div id="pv-hist-list" class="record-stack"></div>
+      </section>
     `;
-    document.getElementById('pv-hist-list').innerHTML = filteredHistory.length ? filteredHistory.map(o=>buildOrderCard(o,'provider')).join('') : `<div class="empty-state"><div class="empty-sub">No completed history in the last ${limitDays} days.</div></div>`;
+    document.getElementById('pv-hist-list').innerHTML = filteredHistory.length ? filteredHistory.map(o=>buildOrderCard(o,'provider')).join('') : renderDashboardListState({
+      icon: '📦',
+      title: `No completed history in the last ${limitDays} days`,
+      description: 'No provider order history was recorded during this period.',
+      subtext: 'Completed dispatches will display here once available.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
   }
 }
 
@@ -999,7 +2756,7 @@ window.clearAllHistory = function(role) {
     if(role === 'rider') return o.riderId === SESSION.id && o.status === 'completed';
     return false;
   });
-  orders.forEach(o => window.localStorage.removeItem(STORAGE_KEY_PREFIX + 'ord:' + o.id));
+  orders.forEach(o => ReGenXRealtime?.removeOrderKey(o.id, { rooms: ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room'], eventType: 'KPI_UPDATED' }));
   showToast("✓ History Cleared");
   refreshCurrentView(true);
 }
@@ -1026,17 +2783,28 @@ window.submitPvRequest = function() {
     wasteType: type, kg, shift, plantId: nearest.id, plantName: nearest.org, status: 'requested'
   };
   saveOrder(o);
+  addSlaEntry(o);
+  recordTrustEvent(o, 'requested', 'provider', { lat: SESSION.lat, lng: SESSION.lng });
+  publishOperationalEvent('DISPATCH_CREATED', [], {
+    toast: `New dispatch created for ${nearest.org}.`,
+    statusLabel: 'Dispatch live'
+  }, ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room']);
   showToast(`✓ Dispatched! Routed to ${nearest.org} (${minDist.toFixed(1)}km away).`);
   showView('v-pv-dash');
 }
 
 window.cancelOrder = function(id) {
   const o = getOrder(id); if(!o) return;
-  o.status = 'rejected'; saveOrder(o); showToast("Cancelled."); refreshCurrentView();
+  o.status = 'rejected'; saveOrder(o);
+  publishOperationalEvent('KPI_UPDATED', [], {
+    toast: `Dispatch #${o.id.slice(-6).toUpperCase()} was cancelled.`,
+    statusLabel: 'Cancelled'
+  }, ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room']);
+  showToast("Cancelled."); refreshCurrentView();
 }
 
 window.deleteOrder = function(id) {
-  window.localStorage.removeItem(STORAGE_KEY_PREFIX + 'ord:' + id);
+  ReGenXRealtime?.removeOrderKey(id, { rooms: ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room'], eventType: 'KPI_UPDATED', meta: { statusLabel: 'Order removed' } });
   showToast("✓ Record Deleted");
   refreshCurrentView(true);
 }
@@ -1160,6 +2928,16 @@ async function renderRider(mc, fullRender) {
         <button class="mobile-tab-btn ${tab==='analytics'?'active':''}" onclick="switchRdTab('analytics')">AI Telemetry</button>
       </div>
 
+      ${renderTrustIndexCard()}
+      ${renderComplianceWidget()}
+      ${renderReconciliationWidget()}
+      ${renderSlaWidget()}
+      ${renderEnergyWidget()}
+      ${renderSensorWidget()}
+      ${renderEmissionsWidget()}
+      ${renderQualityWidget()}
+      ${renderAutomationWidget()}
+
       <div class="two-col">
         <div class="${tab !== 'route' ? 'desktop-only' : ''}">
           <h3 class="heading" style="margin-bottom:16px;">Active Tasks ${activeJobs.length > 1 ? `<span class="badge badge-amber" style="margin-left:8px;">Batching Enabled</span>` : ''}</h3>
@@ -1175,7 +2953,7 @@ async function renderRider(mc, fullRender) {
           </div>
           <div class="glass-card sensor-card" style="margin-bottom:16px; padding:16px; border-color:var(--border);">
              <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:12px; text-transform:uppercase;">🌍 Live Conditions</div>
-             <div class="between" style="margin-bottom:8px;"><div>🌧️ Weather</div><div style="font-weight:700; color:var(--text-muted);" id="rt-weather">Fetching...</div></div>
+             <div class="between" style="margin-bottom:8px;"><div>🌧️ Weather</div><div id="rt-weather" class="skeleton-loader"></div></div>
              <div class="between" style="margin-bottom:8px;"><div>🚗 Traffic</div><div style="font-weight:700; color:var(--green);" id="rt-traffic">Normal</div></div>
              <div class="between"><div>⏱️ Weather Delay</div><div style="font-weight:700; color:var(--text-muted);" id="rt-ai-adj">+0 Mins</div></div>
           </div>
@@ -1185,12 +2963,26 @@ async function renderRider(mc, fullRender) {
              <div class="between" style="margin-bottom:8px;"><div>⏱️ ETA</div><div style="font-weight:700; color:var(--blue);" id="rt-eta">Calculating…</div></div>
              <div class="between" style="margin-bottom:8px;"><div>⛽ Fuel Saved</div><div style="font-weight:700; color:var(--green);" id="rt-fuel-saved">—</div></div>
              <div class="between"><div>🔋 Battery</div><div style="font-weight:700;" id="rt-batt">--</div></div>
-          </div>` : '<div class="empty-state">No active telemetry. Accept a job to see live data.</div>'}
+          </div>` : renderDashboardListState({
+            icon: '📡',
+            title: 'No active telemetry',
+            description: 'Accept a job to start live route telemetry.',
+            subtext: 'Weather, ETA, fuel, and battery values will appear after a route is active.',
+            statusLabel: 'Idle',
+            tone: 'inactive'
+          })}
         </div>
       </div>
     `;
     
-    document.getElementById('rd-act').innerHTML = activeJobs.length ? activeJobs.map(o => buildOrderCard(o, 'rider')).join('') : `<div class="empty-state"><div class="empty-icon">📍</div><div class="empty-title">No Active Task</div><div class="empty-sub">Check available jobs to begin a route.</div></div>`;
+    document.getElementById('rd-act').innerHTML = activeJobs.length ? activeJobs.map(o => buildOrderCard(o, 'rider')).join('') : renderDashboardListState({
+      icon: '📍',
+      title: 'No active task',
+      description: 'Check available jobs to begin a route.',
+      subtext: 'When a dispatch is accepted, route progress will appear here.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
     
     if (activeJobs.length) {
       const active = activeJobs[0]; // Primary task for timeline
@@ -1307,7 +3099,7 @@ async function renderRider(mc, fullRender) {
             </div>
           `;
         }
-        showToast(`🤖 TSP Order ready (${source}). Fetching road route…`);
+        showToast(`🤖 TSP Order ready (${result?.source || 'route'}). Fetching road route…`);
 
         // PHASE 2: Try OSRM for real road geometry (async enhancement)
         const route = await fetchOSRMRoute(waypoints);
@@ -1354,6 +3146,10 @@ async function renderRider(mc, fullRender) {
           if(!w || currentView !== 'v-rd-dash') return;
           const wt = document.getElementById('rt-weather');
           const ct = document.getElementById('rt-temp');
+          const trafficEl = document.getElementById('rt-traffic');
+          const aiAdjEl = document.getElementById('rt-ai-adj');
+          const battEl = document.getElementById('rt-batt');
+          const confEl = document.getElementById('rt-conf');
           if(wt) {
             let cond = "Clear";
             if(w.weathercode > 50) cond = "Raining";
@@ -1361,28 +3157,47 @@ async function renderRider(mc, fullRender) {
             wt.textContent = cond + ` (${Math.round(w.temperature)}°C)`;
             wt.style.color = w.weathercode > 50 ? "var(--amber)" : "var(--green)";
             if(w.weathercode > 50) { 
-               document.getElementById('rt-traffic').textContent = "Congested"; 
-               document.getElementById('rt-ai-adj').textContent = "+12 Mins"; 
-               document.getElementById('rt-ai-adj').style.color = "var(--amber)"; 
+               if (trafficEl) trafficEl.textContent = "Congested"; 
+               if (aiAdjEl) {
+                 aiAdjEl.textContent = "+12 Mins"; 
+                 aiAdjEl.style.color = "var(--amber)";
+               }
             }
           }
           if(ct) ct.textContent = Math.round(w.temperature - 2) + "°C";
-          document.getElementById('rt-batt').textContent = Math.floor(Math.random() * 30 + 60) + "%";
-          document.getElementById('rt-batt').style.color = "var(--green)";
-          document.getElementById('rt-conf').textContent = "98.2%";
-          document.getElementById('rt-conf').style.color = "var(--blue)";
+          if (battEl) {
+            battEl.textContent = Math.floor(Math.random() * 30 + 60) + "%";
+            battEl.style.color = "var(--green)";
+          }
+          if (confEl) {
+            confEl.textContent = "98.2%";
+            confEl.style.color = "var(--blue)";
+          }
        });
     }
   }
 
   if (currentView === 'v-rd-jobs') {
     if(fullRender) mc.innerHTML = `<h3 class="heading" style="margin-bottom:24px;">Available Jobs</h3><div id="rd-jobs-list"></div>`;
-    document.getElementById('rd-jobs-list').innerHTML = pending.length ? pending.map(o=>buildOrderCard(o,'rider')).join('') : '<div class="empty-state"><div class="empty-sub">No pending requests right now.</div></div>';
+    document.getElementById('rd-jobs-list').innerHTML = pending.length ? pending.map(o=>buildOrderCard(o,'rider')).join('') : renderDashboardListState({
+      icon: '📋',
+      title: 'No pending requests',
+      description: 'There are no unassigned requests right now.',
+      subtext: 'New requests will populate this queue automatically.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
   }
 
   if (currentView === 'v-rd-hist') {
     if(fullRender) mc.innerHTML = `<h3 class="heading" style="margin-bottom:24px;">Completions</h3><div id="rd-hist-list"></div>`;
-    document.getElementById('rd-hist-list').innerHTML = hist.length ? hist.map(o=>buildOrderCard(o,'rider')).join('') : '<div class="empty-state">No completions yet.</div>';
+    document.getElementById('rd-hist-list').innerHTML = hist.length ? hist.map(o=>buildOrderCard(o,'rider')).join('') : renderDashboardListState({
+      icon: '✓',
+      title: 'No completions yet',
+      description: 'Completed jobs will appear here after route closure.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
   }
 }
 
@@ -1391,11 +3206,26 @@ window.switchRdTab = function(t) { window._rdTab = t; refreshCurrentView(true); 
 window.riderAccept = function(id) {
   const o = getOrder(id); if(!o) return;
   o.status = 'assigned'; o.riderId = SESSION.id; o.riderName = SESSION.name;
-  saveOrder(o); showToast("✓ Route Added to Batch!"); showView('v-rd-dash');
+  saveOrder(o);
+  updateSlaEntry(o.id, { status: 'assigned' });
+  recordTrustEvent(o, 'assigned', 'rider', { lat: SESSION.lat, lng: SESSION.lng });
+  publishOperationalEvent('KPI_UPDATED', [], {
+    toast: `Rider ${SESSION.name} accepted dispatch #${o.id.slice(-6).toUpperCase()}.`,
+    statusLabel: 'Route assigned'
+  }, ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room']);
+  showToast("✓ Route Added to Batch!");
+  showView('v-rd-dash');
 }
 window.riderUpdate = function(id, st) {
   const o = getOrder(id); if(!o) return;
-  o.status = st; saveOrder(o); refreshCurrentView();
+  o.status = st; saveOrder(o);
+  updateSlaEntry(o.id, { status: st });
+  recordTrustEvent(o, st, 'rider', { lat: SESSION.lat, lng: SESSION.lng });
+  publishOperationalEvent('KPI_UPDATED', [], {
+    toast: `Dispatch #${o.id.slice(-6).toUpperCase()} moved to ${st.replace('_', ' ')}.`,
+    statusLabel: 'Route moving'
+  }, ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room']);
+  refreshCurrentView();
 }
 window.openPickupConfirm = function(id) {
   const html = `
@@ -1412,7 +3242,103 @@ window.confirmPickup = function(id) {
   const kg = document.getElementById('m-kg').value;
   if(!kg) return showToast("⚠ Enter weight.");
   const o = getOrder(id); o.status = 'picked_up'; o.actualKg = kg; o.quality = document.getElementById('m-qual').value;
-  saveOrder(o); closeModal(); refreshCurrentView();
+  saveOrder(o);
+  updateSlaEntry(o.id, { pickupTs: ts(), status: 'picked_up' });
+  recordTrustEvent(o, 'picked_up', 'rider', { lat: SESSION.lat, lng: SESSION.lng });
+  publishOperationalEvent('PICKUP_CONFIRMED', [], {
+    toast: `Pickup confirmed for dispatch #${o.id.slice(-6).toUpperCase()}.`,
+    statusLabel: 'Pickup live'
+  }, ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room']);
+  closeModal();
+  refreshCurrentView();
+}
+
+/**
+ * Map trust ledger events to display labels.
+ * @param {string} event - Event key.
+ * @returns {{label:string, icon:string}}
+ */
+function getIntegrityEventMeta(event) {
+  const map = {
+    requested: { label: 'Origin Collection Dispatched', icon: '🏨' },
+    assigned: { label: 'Rider Assignment Confirmed', icon: '🧭' },
+    en_route: { label: 'Logistics Chain Verification', icon: '🚛' },
+    picked_up: { label: 'Custody Transfer Logged', icon: '📦' },
+    at_plant: { label: 'Plant Gate Arrival', icon: '🏭' },
+    completed: { label: 'Plant Processing Attestation', icon: '🧪' },
+    sealed: { label: 'Cryptographic Seal Minted', icon: '🔒' }
+  };
+  return map[event] || { label: 'Ledger Event', icon: '🧷' };
+}
+
+/**
+ * Open integrity scan modal for an order.
+ * @param {string} orderId - Order id.
+ */
+window.openIntegrityScan = function(orderId) {
+  const order = getOrder(orderId);
+  if (!order) return;
+
+  const box = document.getElementById('modal-box');
+  const modal = document.getElementById('modal');
+  if (!box || !modal) return;
+
+  box.innerHTML = `
+    <h3 class="modal-title">Integrity Scan</h3>
+    <p class="modal-sub">Validating custody chain and route integrity for this dispatch.</p>
+    <div class="integrity-scan-panel">
+      <div class="integrity-spinner"></div>
+      <div style="font-size:13px; color:var(--text-muted);">Running zero-trust verification...</div>
+    </div>
+  `;
+  modal.classList.add('open');
+
+  setTimeout(() => {
+    const events = getOrderLedgerEvents(orderId);
+    const integrity = getOrderIntegrity(order);
+    const statusClass = integrity.score >= 90 ? 'badge-green' : integrity.score >= 75 ? 'badge-blue' : integrity.score >= 60 ? 'badge-amber' : 'badge-red';
+    const statusLabel = integrity.score >= 90 ? 'High Integrity' : integrity.score >= 75 ? 'Verified' : integrity.score >= 60 ? 'Watch' : 'Risk';
+
+    const timeline = events.length ? events.map((e, idx) => {
+      const meta = getIntegrityEventMeta(e.event);
+      return `
+        <div class="trust-tl-item">
+          <div class="trust-tl-icon">${meta.icon}</div>
+          <div>
+            <div class="trust-tl-title">${meta.label}</div>
+            <div class="trust-tl-sub">${fmtDate(e.ts)} · ${e.actorRole.toUpperCase()}</div>
+          </div>
+          ${idx < events.length - 1 ? '<div class="trust-tl-line"></div>' : ''}
+        </div>
+      `;
+    }).join('') : renderDashboardListState({
+      icon: '🧾',
+      title: 'No ledger events yet',
+      description: 'This dispatch has no recorded custody events.',
+      subtext: 'Once the order is scanned, the timeline will populate here.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
+
+    box.innerHTML = `
+      <h3 class="modal-title">Integrity Scan</h3>
+      <p class="modal-sub">Ledger hash and custody chain validated.</p>
+      <div class="integrity-summary">
+        <div>
+          <div style="font-size:12px; text-transform:uppercase; color:var(--text-muted); font-weight:700;">Trust Score</div>
+          <div style="font-size:24px; font-weight:800;">${integrity.score}/100</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="badge ${statusClass}">${statusLabel}</div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Δ ${integrity.maxDeviationKm.toFixed(2)} km · Gap ${Math.round(integrity.maxGapMins)} min</div>
+        </div>
+      </div>
+      <div class="trust-timeline">${timeline}</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      </div>
+    `;
+  }, 900);
 }
 window.closeModal = function() { document.getElementById('modal').classList.remove('open'); }
 
@@ -1442,7 +3368,12 @@ window.openSettings = function() {
 
 window.deleteAccount = function() {
   if(confirm("Are you sure you want to permanently delete your account? This action cannot be undone.")) {
-    window.localStorage.removeItem(STORAGE_KEY_PREFIX + 'acc:' + SESSION.id);
+    ReGenXRealtime?.syncStorageMutation({
+      updates: [{ key: STORAGE_KEY_PREFIX + 'acc:' + SESSION.id, action: 'remove' }],
+      rooms: ['network_room', 'admin_room'],
+      eventType: 'KPI_UPDATED',
+      meta: { statusLabel: 'Account deleted' }
+    });
     closeModal();
     doLogout();
     refreshLoginDropdown();
@@ -1504,25 +3435,35 @@ async function renderPlant(mc, fullRender) {
   if (currentView === 'v-pl-dash') {
     if(fullRender) mc.innerHTML = `
       <div class="stats-grid" id="pl-stats"></div>
+
+      ${renderTrustIndexCard()}
+      ${renderComplianceWidget()}
+      ${renderReconciliationWidget()}
+      ${renderSlaWidget()}
+      ${renderEnergyWidget()}
+      ${renderSensorWidget()}
+      ${renderEmissionsWidget()}
+      ${renderQualityWidget()}
+      ${renderAutomationWidget()}
       
       <div id="pl-ai-widget"></div>
       
       <h3 class="heading" style="margin-bottom:16px; margin-top:16px;">Live Digester Vitals</h3>
       <div class="stats-grid" style="margin-bottom:32px;">
         <div class="glass-card sensor-card" style="text-align:center;">
-           <div class="gauge-circle" style="border-top-color:var(--text-muted); animation:none;" id="pl-gauge-temp"><span>0°C</span></div>
-           <div style="font-weight:600;">Core Temp</div>
-           <div style="font-size:11px; color:var(--text-muted); margin-top:4px;" id="pl-stat-temp">Fetching...</div>
+          <div class="gauge-circle gauge-placeholder" style="border-top-color:var(--text-muted); animation:none;" id="pl-gauge-temp"><span>—</span></div>
+          <div style="font-weight:600;">Core Temp</div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:4px;" id="pl-stat-temp">Loading telemetry…</div>
         </div>
         <div class="glass-card sensor-card" style="text-align:center;">
-           <div class="gauge-circle" style="border-top-color:var(--text-muted); animation:none;"><span>0</span></div>
-           <div style="font-weight:600;">Pressure (atm)</div>
-           <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Offline</div>
+          <div class="gauge-circle gauge-placeholder" style="border-top-color:var(--text-muted); animation:none;" id="pl-gauge-pres"><span>—</span></div>
+          <div style="font-weight:600;">Pressure (atm)</div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:4px;" id="pl-stat-pres">Loading telemetry…</div>
         </div>
         <div class="glass-card sensor-card" style="text-align:center;">
-           <div class="gauge-circle" style="border-top-color:var(--text-muted); animation:none;"><span>0</span></div>
-           <div style="font-weight:600;">CH₄ Flow (m³/h)</div>
-           <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Offline</div>
+          <div class="gauge-circle gauge-placeholder" style="border-top-color:var(--text-muted); animation:none;" id="pl-gauge-flow"><span>—</span></div>
+          <div style="font-weight:600;">CH₄ Flow (m³/h)</div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:4px;" id="pl-stat-flow">Loading telemetry…</div>
         </div>
       </div>
 
@@ -1538,12 +3479,52 @@ async function renderPlant(mc, fullRender) {
     `;
     const totKg = completed.reduce((s,o)=>s+parseFloat(o.actualKg||0),0);
     const totBio = logs.reduce((s,l)=>s+parseFloat(l.bio||0),0);
+    const recentKgSeries = completed.slice(0, 6).reverse().map(o => Number(o.actualKg || o.kg || 0));
+    const recentBioSeries = logs.slice(0, 6).reverse().map(l => Number(l.bio || 0));
+    const bioTrendDirection = recentBioSeries.length > 1
+      ? (recentBioSeries[recentBioSeries.length - 1] > recentBioSeries[0] ? 'up' : recentBioSeries[recentBioSeries.length - 1] < recentBioSeries[0] ? 'down' : 'flat')
+      : 'flat';
+    const kgTrendDirection = recentKgSeries.length > 1
+      ? (recentKgSeries[recentKgSeries.length - 1] > recentKgSeries[0] ? 'up' : recentKgSeries[recentKgSeries.length - 1] < recentKgSeries[0] ? 'down' : 'flat')
+      : 'flat';
+    const loadsSeries = completed.slice(0, 6).reverse().map((_, index) => index + 1);
     
-    document.getElementById('pl-stats').innerHTML = `
-      <div class="stat-card"><div class="stat-val">${completed.length}</div><div class="stat-lbl">Processed Loads</div></div>
-      <div class="stat-card"><div class="stat-val">${totKg}</div><div class="stat-lbl">Kg Received</div></div>
-      <div class="stat-card"><div class="stat-val">${totBio.toFixed(1)}</div><div class="stat-lbl">Biogas (m³)</div></div>
-    `;
+    document.getElementById('pl-stats').innerHTML = renderMetricGrid([
+      renderMetricCard({
+        title: 'Processed Loads',
+        value: completed.length,
+        description: completed.length ? 'Completed deliveries recorded today.' : 'No loads processed today.',
+        status: completed.length ? 'active' : 'empty',
+        icon: '🚚',
+        statusLabel: completed.length ? 'Live' : 'No data',
+        tone: completed.length ? 'active' : 'inactive',
+        trend: completed.length ? { direction: 'up', label: 'Volume' } : null,
+        sparkline: loadsSeries
+      }),
+      renderMetricCard({
+        title: 'Kg Received',
+        value: completed.length ? totKg : null,
+        description: completed.length ? 'Feedstock captured from completed loads.' : 'No incoming mass has been logged.',
+        status: completed.length ? 'active' : 'empty',
+        icon: '⚖️',
+        statusLabel: completed.length ? 'Live' : 'No data',
+        tone: completed.length ? 'active' : 'inactive',
+        trend: completed.length ? { direction: kgTrendDirection, label: kgTrendDirection === 'up' ? 'Rising' : kgTrendDirection === 'down' ? 'Falling' : 'Flat' } : null,
+        sparkline: recentKgSeries
+      }),
+      renderMetricCard({
+        title: 'Biogas Generated',
+        value: completed.length ? (Number.isInteger(totBio) ? totBio : totBio.toFixed(1)) : null,
+        description: completed.length ? (totBio > 0 ? 'Current biogas yield from recent output logs.' : 'No activity detected today.') : 'Biogas output will appear after processing begins.',
+        status: completed.length ? 'active' : 'empty',
+        icon: '💨',
+        statusLabel: completed.length ? (totBio > 0 ? 'Live' : 'Zero Activity') : 'No data',
+        tone: completed.length ? 'active' : 'inactive',
+        unit: 'm³',
+        trend: completed.length ? { direction: bioTrendDirection, label: bioTrendDirection === 'up' ? 'Rising' : bioTrendDirection === 'down' ? 'Falling' : 'Flat' } : null,
+        sparkline: recentBioSeries.length ? recentBioSeries : completed.length ? [0, 0, 0, 0] : []
+      })
+    ]);
 
     // AI Yield Optimization Engine
     const yieldPrediction = YieldOptimizer.predictYield(completed.slice(0, 10)); // Use recent history
@@ -1572,14 +3553,27 @@ async function renderPlant(mc, fullRender) {
           </div>
         `;
     }
-    document.getElementById('pl-inc').innerHTML = incoming.length ? incoming.map(o=>buildOrderCard(o,'plant')).join('') : '<div class="empty-state">No trucks waiting at gate.</div>';
+    document.getElementById('pl-inc').innerHTML = incoming.length ? incoming.map(o=>buildOrderCard(o,'plant')).join('') : renderDashboardListState({
+      icon: '🚚',
+      title: 'No trucks waiting at gate',
+      description: 'Incoming flow is currently idle.',
+      subtext: 'New arrivals will appear here as they reach the plant.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
     
     document.getElementById('pl-out-logs').innerHTML = logs.length ? logs.slice(0,4).map(l => `
       <div class="glass-card" style="padding:16px; margin-bottom:12px;">
          <div class="between" style="margin-bottom:8px;"><span class="badge badge-blue">Log</span> <span class="muted" style="font-size:12px">${fmtDate(l.ts)}</span></div>
          <div style="font-size:14px;"><strong>Biogas:</strong> ${l.bio} m³ &nbsp;·&nbsp; <strong>Compost:</strong> ${l.comp} kg</div>
       </div>
-    `).join('') : '<div class="empty-state">No outputs logged.</div>';
+    `).join('') : renderDashboardListState({
+      icon: '📜',
+      title: 'No outputs logged',
+      description: 'Biogas and compost outputs will appear here once the plant starts logging results.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
     
     if(fullRender) {
       setTimeout(initPlChart, 100);
@@ -1610,7 +3604,14 @@ async function renderPlant(mc, fullRender) {
 
   if (currentView === 'v-pl-in') {
     if(fullRender) mc.innerHTML = `<h3 class="heading" style="margin-bottom:24px;">Incoming Flow</h3><div id="pl-in-list"></div>`;
-    document.getElementById('pl-in-list').innerHTML = incoming.length ? incoming.map(o=>buildOrderCard(o,'plant')).join('') : '<div class="empty-state">No incoming.</div>';
+    document.getElementById('pl-in-list').innerHTML = incoming.length ? incoming.map(o=>buildOrderCard(o,'plant')).join('') : renderDashboardListState({
+      icon: '🚛',
+      title: 'No incoming flow',
+      description: 'There are no inbound loads queued for the plant.',
+      subtext: 'Dispatch activity will populate this lane automatically.',
+      statusLabel: 'Idle',
+      tone: 'inactive'
+    });
   }
 
   if (currentView === 'v-pl-out') {
@@ -1654,6 +3655,7 @@ window.openPlantConfirm = function(id) {
 
 window.confirmPlantReceipt = function(id) {
   const o = getOrder(id); if(!o) return;
+  if (o.status === 'completed') return showToast('Order already processed.');
   const score = document.getElementById('p-score').value || 0;
   o.status = 'completed'; o.segScore = score;
   
@@ -1661,7 +3663,8 @@ window.confirmPlantReceipt = function(id) {
   if (providerAcc) {
      const providerHistory = getAllOrders().filter(ord => ord.providerId === o.providerId && ord.status === 'completed');
      const trustScore = TrustProtocol.calculateScore(providerAcc, providerHistory);
-     const earnedTokens = TrustProtocol.calculateReward(Math.round((o.actualKg || o.kg) * 2), trustScore);
+      const baseTokens = Math.round((o.actualKg || o.kg) * 2);
+      const earnedTokens = TrustProtocol.calculateReward(baseTokens, trustScore);
      
      providerAcc.tokens = (providerAcc.tokens || 0) + earnedTokens;
      o.tokensMinted = earnedTokens;
@@ -1672,9 +3675,82 @@ window.confirmPlantReceipt = function(id) {
          SESSION.tokens = providerAcc.tokens;
          document.getElementById('token-balance').textContent = SESSION.tokens;
      }
+
+      // Expected tokens represent the base (non-trust-multiplied) reward.
+      // Minted tokens include the TrustProtocol multiplier, so deltaPct reflects
+      // the trust bonus/penalty percentage (and enables mismatch flagging).
+      const expectedTokens = baseTokens;
+      const deltaPct = expectedTokens > 0 ? Math.abs(earnedTokens - expectedTokens) / expectedTokens * 100 : 0;
+     addCreditEntry({
+       id: 'credit-' + uid(),
+       orderId: o.id,
+       org: o.providerOrg,
+       expectedTokens,
+       mintedTokens: earnedTokens,
+       deltaPct,
+       trustScore,
+       ts: ts()
+     });
   }
 
-  saveOrder(o); closeModal(); refreshCurrentView(); showToast(`✓ Intake Confirmed. Minted ${earnedTokens} $RGX for provider!`);
+  saveOrder(o);
+  updateSlaEntry(o.id, { completeTs: ts(), status: 'completed' });
+  recordTrustEvent(o, 'completed', 'plant', { lat: SESSION.lat, lng: SESSION.lng });
+  recordTrustEvent(o, 'sealed', 'plant', { lat: SESSION.lat, lng: SESSION.lng });
+  addEsgAlertsForOrder(o);
+  const kgProcessed = parseFloat(o.actualKg || o.kg || 0);
+  if (kgProcessed > 0) {
+    const energyKwh = parseFloat((kgProcessed * 0.35).toFixed(2));
+    const efficiencyPct = Math.min(100, Math.round((energyKwh / (kgProcessed * 0.5)) * 100));
+    const score = Math.max(10, Math.round((efficiencyPct * 0.7) + (o.segScore ? (o.segScore * 0.3) : 0)));
+    addEnergyEntry({
+      id: 'eng-' + uid(),
+      orderId: o.id,
+      org: o.providerOrg,
+      kg: kgProcessed,
+      energyKwh,
+      efficiencyPct,
+      score,
+      ts: ts()
+    });
+  }
+  publishOperationalEvent('DELIVERY_COMPLETED', [], {
+    toast: `Plant confirmed receipt for dispatch #${o.id.slice(-6).toUpperCase()}.`,
+    statusLabel: 'Delivery complete'
+  }, ['network_room', 'providers_room', 'riders_room', 'plants_room', 'admin_room']);
+  const route = getOrderRouteEndpoints(o);
+  if (route.start && route.end) {
+    const distanceKm = parseFloat(distanceKm(route.start.lat, route.start.lng, route.end.lat, route.end.lng).toFixed(1));
+    const emissionKg = parseFloat((distanceKm * 0.21).toFixed(2));
+    const offsetKg = parseFloat((kgProcessed * 0.62).toFixed(2));
+    const score = Math.max(10, Math.min(100, Math.round((offsetKg / Math.max(emissionKg, 1)) * 100)));
+    addEmissionsEntry({
+      id: 'ems-' + uid(),
+      orderId: o.id,
+      org: o.providerOrg,
+      distanceKm,
+      emissionKg,
+      offsetKg,
+      score,
+      ts: ts()
+    });
+  }
+  if (kgProcessed > 0) {
+    const segScore = parseFloat(o.segScore || 0);
+    const qualityScore = Math.max(10, Math.min(100, Math.round(segScore || 70)));
+    addQualityEntry({
+      id: 'qlt-' + uid(),
+      orderId: o.id,
+      org: o.providerOrg,
+      kg: kgProcessed,
+      segScore: segScore || 0,
+      score: qualityScore,
+      ts: ts()
+    });
+  }
+  closeModal();
+  refreshCurrentView();
+  showToast(`✓ Intake Confirmed. Minted ${earnedTokens} $RGX for provider!`);
 }
 
 window.savePlantLog = function() {
@@ -1782,6 +3858,15 @@ function startIoTSim() {
     if (changed) {
       saveIoTBins(bins);
       syncIoTAlertBadge();
+      const summary = getSensorReliabilitySummary();
+      addSensorSnapshot({
+        id: 'sensor-' + uid(),
+        ts: ts(),
+        score: summary.score,
+        offlineCount: summary.offlineCount,
+        staleCount: summary.staleCount,
+        total: summary.total
+      });
       // If user is watching the IoT view, refresh the fill bars without full re-render
       if (currentView === 'v-iot-bins') iotLiveUpdate(bins);
     }
@@ -1921,13 +4006,14 @@ function renderIoT(mc, fullRender) {
 
     <!-- Bin Cards Grid -->
     <div class="iot-bins-grid" id="iot-bins-grid">
-      ${bins.length ? bins.map(buildBinCard).join('') : `
-        <div class="empty-state" style="grid-column:1/-1;">
-          <div class="empty-icon">🗑️</div>
-          <div class="empty-title">No bins connected</div>
-          <div class="empty-sub">Click <strong>+ Add Bin</strong> to register your first IoT sensory bin.</div>
-        </div>`}
-    </div>
+      ${bins.length ? bins.map(buildBinCard).join('') : renderDashboardListState({
+        icon: '🗑️',
+        title: 'No bins connected',
+        description: 'Register your first IoT bin to begin monitoring waste fill levels.',
+        actionHtml: '<button class="btn btn-ghost btn-sm" onclick="showView(\'v-iot-bins\')">Add Bin</button>',
+        statusLabel: 'Idle',
+        tone: 'inactive'
+      })}
 
     <!-- Network telemetry footer -->
     <div class="glass-card sensor-card" style="margin-top:28px; padding:20px;">
@@ -2024,6 +4110,11 @@ window.iotDispatchFromBin = function(id) {
   showToast('⚠ Fill in quantity and submit to dispatch a collection for this bin.');
 };
 
+window.refreshCurrentView = refreshCurrentView;
+window.refreshLoginDropdown = refreshLoginDropdown;
+window.startGreenWall = startGreenWall;
+window.syncIoTAlertBadge = syncIoTAlertBadge;
+
 // ── INIT ──
 (function seedDB() {
   if (!DB.get('iot-bins')) {
@@ -2042,4 +4133,97 @@ document.getElementById('login-screen').style.display = 'flex';
 switchAuthTab('login');
 
 // ── Initialize Appwrite Cloud Sync Engine ──
+setTimeout(() => { ReGenXRealtime?.init(); ReGenXRealtime?.requestSnapshot?.(); }, 1000);
 setTimeout(() => { if (window.CloudSync) window.CloudSync.init(); }, 1000);
+
+// Expose module-scoped functions to global scope for inline HTML handlers
+window.doRegister = doRegister;
+window.doLogin = doLogin;
+window.switchAuthTab = switchAuthTab;
+window.selectRole = selectRole;
+window.detectGPS = detectGPS;
+window.searchLocation = searchLocation;
+window.resetAppData = resetAppData;
+window.doLogout = doLogout;
+window.toggleTheme = toggleTheme;
+window.toggleSidebar = toggleSidebar;
+window.saveOrder = saveOrder;
+window.refreshCurrentView = refreshCurrentView;
+
+/**
+ * Returns the currently active view ID.
+ * @returns {string} The active view ID.
+ */
+window.getCurrentView = () => currentView;
+
+/**
+ * Returns the active user session object.
+ * @returns {Object} The session object.
+ */
+window.getSESSION = () => SESSION;
+
+/**
+ * @function animateAuthEntry
+ * @description Triggers a GSAP entrance animation on the login box for desktop viewports.
+ * Enhances perceived performance and visual polish on non-touch devices.
+ */
+function animateAuthEntry() {
+  if (window.gsap && window.matchMedia('(min-width: 768px)').matches) {
+    gsap.from('.login-box', {
+      y: 40,
+      opacity: 0,
+      duration: 0.7,
+      ease: 'power3.out'
+    });
+  }
+}
+
+window.addEventListener('DOMContentLoaded', animateAuthEntry);
+
+/**
+ * @function detectDeviceClass
+ * @description Detects whether the user is on a touch (mobile) or pointer (desktop) device
+ * using the CSS media query API. Applies a data-device attribute to <body> so CSS can
+ * serve targeted layout rules without JS-in-CSS hacks.
+ * @returns {void}
+ */
+function detectDeviceClass() {
+  const isTouch = window.matchMedia('(pointer: coarse)').matches;
+  document.body.setAttribute('data-device', isTouch ? 'mobile' : 'desktop');
+}
+
+detectDeviceClass();
+window.detectDeviceClass = detectDeviceClass;
+
+// ==========================================
+// DARK MODE TOGGLE LOGIC (ISSUE #79)
+// ==========================================
+document.addEventListener('DOMContentLoaded', () => {
+    const navToggleBtn = document.getElementById('navbar-theme-toggle');
+    const rootHtml = document.documentElement;
+
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        rootHtml.classList.add('dark');
+        if (navToggleBtn) navToggleBtn.innerText = '☀️';
+    } else {
+        rootHtml.classList.remove('dark');
+        if (navToggleBtn) navToggleBtn.innerText = '🌙';
+    }
+
+    if (navToggleBtn) {
+        navToggleBtn.addEventListener('click', () => {
+            if (rootHtml.classList.contains('dark')) {
+                rootHtml.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+                navToggleBtn.innerText = '🌙';
+            } else {
+                rootHtml.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+                navToggleBtn.innerText = '☀️';
+            }
+        });
+    }
+});
