@@ -1159,6 +1159,9 @@ tr:hover td { background: var(--bg); }
   .desktop-only { display: none !important; }
 
   .glass-card { padding: 16px; }
+
+  .iot-bins-grid { grid-template-columns: 1fr; }
+  .iot-sensor-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 520px) {
@@ -1176,8 +1179,6 @@ tr:hover td { background: var(--bg); }
   .order-stepper {
     justify-content: flex-start;
     gap: 10px;
-    flex-shrink: 0;
-    min-width: 72px;
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
@@ -1252,31 +1253,6 @@ tr:hover td { background: var(--bg); }
 
 @media (max-width: 768px) {
   .sidebar-close { display: block; }
-}
-
-@media (max-width: 520px) {
-  .content-wrapper {
-    padding: 10px;
-  }
-
-  .glass-card,
-  .order-card,
-  .stat-card {
-    padding: 14px;
-  }
-
-  .topbar-title {
-    font-size: 16px;
-    margin-left: 36px;
-  }
-
-  .iot-bins-grid {
-    grid-template-columns: 1fr;
-  }
-
-  canvas {
-    max-width: 100% !important;
-  }
 }
 
 /* TOAST NOTIFICATION */
@@ -1530,10 +1506,6 @@ tr:hover td { background: var(--bg); }
   50%       { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
 }
 
-@media (max-width: 768px) {
-  .iot-bins-grid { grid-template-columns: 1fr; }
-  .iot-sensor-grid { grid-template-columns: repeat(2, 1fr); }
-}
 .skeleton-loader {
     width: 80px;
     height: 16px;
