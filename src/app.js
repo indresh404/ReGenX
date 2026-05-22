@@ -240,7 +240,8 @@ function loadTrustLedger() {
   try {
     const raw = window.localStorage.getItem(TRUST_LEDGER_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -332,6 +333,7 @@ function recordTrustEvent(order, event, actorRole, coords = {}) {
   if (!order) return;
   const ledger = loadTrustLedger();
   const entry = {
+    _v: 1,
     id: uid(),
     orderId: order.id,
     event,
@@ -420,7 +422,8 @@ function loadEsgAlerts() {
   try {
     const raw = window.localStorage.getItem(ESG_ALERTS_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -444,6 +447,7 @@ function saveEsgAlerts(alerts) {
  */
 function addEsgAlert(alert) {
   const alerts = loadEsgAlerts();
+  if (alert) alert._v = 1;
   alerts.push(alert);
   saveEsgAlerts(alerts);
 }
@@ -565,7 +569,8 @@ function loadCreditLedger() {
   try {
     const raw = window.localStorage.getItem(CREDIT_LEDGER_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -589,6 +594,7 @@ function saveCreditLedger(entries) {
  */
 function addCreditEntry(entry) {
   const entries = loadCreditLedger();
+  if (entry) entry._v = 1;
   entries.push(entry);
   saveCreditLedger(entries);
 }
@@ -648,7 +654,8 @@ function loadSlaLedger() {
   try {
     const raw = window.localStorage.getItem(SLA_LEDGER_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -674,6 +681,7 @@ function addSlaEntry(order) {
   if (!order) return;
   const entries = loadSlaLedger();
   entries.push({
+    _v: 1,
     id: 'sla-' + uid(),
     orderId: order.id,
     org: order.providerOrg,
@@ -763,7 +771,8 @@ function loadEnergyLedger() {
   try {
     const raw = window.localStorage.getItem(ENERGY_LEDGER_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -787,6 +796,7 @@ function saveEnergyLedger(entries) {
  */
 function addEnergyEntry(entry) {
   const entries = loadEnergyLedger();
+  if (entry) entry._v = 1;
   entries.push(entry);
   saveEnergyLedger(entries);
 }
@@ -846,7 +856,8 @@ function loadSensorLedger() {
   try {
     const raw = window.localStorage.getItem(SENSOR_LEDGER_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -869,6 +880,7 @@ function saveSensorLedger(entries) {
  */
 function addSensorSnapshot(snapshot) {
   const entries = loadSensorLedger();
+  if (snapshot) snapshot._v = 1;
   entries.push(snapshot);
   saveSensorLedger(entries.slice(-50));
 }
@@ -931,7 +943,8 @@ function loadEmissionsLedger() {
   try {
     const raw = window.localStorage.getItem(EMISSIONS_LEDGER_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -954,6 +967,7 @@ function saveEmissionsLedger(entries) {
  */
 function addEmissionsEntry(entry) {
   const entries = loadEmissionsLedger();
+  if (entry) entry._v = 1;
   entries.push(entry);
   saveEmissionsLedger(entries);
 }
@@ -1014,7 +1028,8 @@ function loadQualityLedger() {
   try {
     const raw = window.localStorage.getItem(QUALITY_LEDGER_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(e => e && e._v === 1);
   } catch {
     return [];
   }
@@ -1037,6 +1052,7 @@ function saveQualityLedger(entries) {
  */
 function addQualityEntry(entry) {
   const entries = loadQualityLedger();
+  if (entry) entry._v = 1;
   entries.push(entry);
   saveQualityLedger(entries);
 }
