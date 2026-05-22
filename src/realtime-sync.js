@@ -85,13 +85,19 @@ function joinCurrentSession() {
 function connectSocket() {
   if (socket || typeof window.io !== 'function') return;
 
-  socket = window.io(window.location.origin, {
+  const config = window.__REALTIME_CONFIG__ || {};
+  const opts = {
     path: '/socket.io',
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionAttempts: Infinity,
     timeout: 8000
-  });
+  };
+  if (config.token) {
+    opts.auth = { token: config.token };
+  }
+
+  socket = window.io(window.location.origin, opts);
 
   socket.on('connect', () => {
     connected = true;
