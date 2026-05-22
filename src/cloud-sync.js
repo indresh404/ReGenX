@@ -37,9 +37,9 @@ export const CloudSync = {
             endpoint: 'https://cloud.appwrite.io/v1',
             projectId: '',
             databaseId: '',
-            ordersCollectionId: ''
+            ordersCollectionId: '',
+            accountsCollectionId: ''
         };
-
         try {
             const response = await fetch('/.env');
             if (response.ok) {
@@ -66,8 +66,10 @@ export const CloudSync = {
                         config.projectId = val;
                     } else if (key === 'VITE_APPWRITE_DATABASE_ID' || key === 'APPWRITE_DATABASE_ID') {
                         config.databaseId = val;
-                    } else if (key === 'VITE_APPWRITE_COLLECTION_ID_ORDERS' || key === 'APPWRITE_COLLECTION_ID_ORDERS') {
+                   } else if (key === 'VITE_APPWRITE_COLLECTION_ID_ORDERS' || key === 'APPWRITE_COLLECTION_ID_ORDERS') {
                         config.ordersCollectionId = val;
+                    } else if (key === 'VITE_APPWRITE_COLLECTION_ID_ACCOUNTS' || key === 'APPWRITE_COLLECTION_ID_ACCOUNTS') {
+                        config.accountsCollectionId = val;
                     }
                 }
             } else {
@@ -293,6 +295,203 @@ export const CloudSync = {
      * @param {Object} document - Data to sync.
      * @returns {Promise<void>}
      */
+    /**
+     * Sanitizes an account object for Appwrite storage.
+     * @param {Object} account - Raw account object.
+     * @returns {Object} Sanitized object.
+     */
+    sanitizeAccount: (account) => {
+        const sanitized = {};
+        ['id', 'role', 'name', 'org'].forEach(f => {
+            sanitized[f] = account[f] != null ? String(account[f]) : '';
+        });
+        ['lat', 'lng', 'tokens', 'staked'].forEach(f => {
+            sanitized[f] = account[f] != null ? Number(account[f]) : 0;
+        });
+        return sanitized;
+    },
+
+    /**
+     * Upserts an account document to Appwrite.
+     * @param {Object} account - Account object with at minimum an `id` field.
+     * @returns {Promise<void>}
+     */
+    pushAccount: async (account) => {
+        if (!CloudSync.isLive || !CloudSync.databases || !CloudSync.config?.accountsCollectionId) return;
+        try {
+            const sanitized = CloudSync.sanitizeAccount(account);
+            const { databaseId, accountsCollectionId } = CloudSync.config;
+            try {
+                await CloudSync.databases.updateDocument(databaseId, accountsCollectionId, account.id, sanitized);
+            } catch (e) {
+                if (e.code === 404) {
+                    await CloudSync.databases.createDocument(databaseId, accountsCollectionId, account.id, sanitized);
+                } else throw e;
+            }
+        } catch (e) {
+            console.error('[CloudSync] pushAccount failed:', e);
+            CloudSync.queueOfflineWrite('acc:' + account.id, account);
+        }
+    },
+
+    /**
+     * Fetches a single account document from Appwrite by UID.
+     * @param {string} uid - Account ID.
+     * @returns {Promise<Object|null>}
+     */
+    fetchAccount: async (uid) => {
+        if (!CloudSync.isLive || !CloudSync.databases || !CloudSync.config?.accountsCollectionId) return null;
+        try {
+            return await CloudSync.databases.getDocument(
+                CloudSync.config.databaseId,
+                CloudSync.config.accountsCollectionId,
+                uid
+            );
+        } catch (e) {
+            return null;
+        }
+    },
+
+    /**
+     * Fetches all orders related to a given user UID from Appwrite.
+     * @param {string} uid - User ID (matched against providerId, riderId, or plantId).
+     * @returns {Promise<Array>}
+     */
+    fetchOrdersForUser: async (uid) => {
+        if (!CloudSync.isLive || !CloudSync.databases || !CloudSync.config) return [];
+        try {
+            const { Query } = window.Appwrite;
+            const [providerRes, riderRes, plantRes] = await Promise.allSettled([
+                CloudSync.databases.listDocuments(
+                    CloudSync.config.databaseId,
+                    CloudSync.config.ordersCollectionId,
+                    [Query.equal('providerId', uid)]
+                ),
+                CloudSync.databases.listDocuments(
+                    CloudSync.config.databaseId,
+                    CloudSync.config.ordersCollectionId,
+                    [Query.equal('riderId', uid)]
+                ),
+                CloudSync.databases.listDocuments(
+                    CloudSync.config.databaseId,
+                    CloudSync.config.ordersCollectionId,
+                    [Query.equal('plantId', uid)]
+                )
+            ]);
+            const docs = [];
+            [providerRes, riderRes, plantRes].forEach(r => {
+                if (r.status === 'fulfilled') docs.push(...(r.value.documents || []));
+            });
+            // Deduplicate by order id
+            return [...new Map(docs.map(d => [d.id, d])).values()];
+        } catch (e) {
+            console.error('[CloudSync] fetchOrdersForUser failed:', e);
+            return [];
+        }
+    },
+
+    /**
+     * Queues a write for offline retry. Stored in localStorage under a dedicated key.
+     * Latest value for any given key wins (deduplication).
+     * @param {string} key - Data key (e.g. 'ord:abc123').
+     * @param {Object} data - Data payload.
+     */
+    queueOfflineWrite: (key, data) => {
+        try {
+            const queue = JSON.parse(localStorage.getItem('regenx-offline-queue') || '[]');
+            const filtered = queue.filter(item => item.key !== key);
+            filtered.push({ key, data, ts: Date.now() });
+            localStorage.setItem('regenx-offline-queue', JSON.stringify(filtered));
+            console.log(`[CloudSync] Queued offline write for key: ${key}`);
+        } catch (e) {
+            console.warn('[CloudSync] Failed to queue offline write:', e);
+        }
+    },
+
+    /**
+     * Flushes all offline-queued writes to Appwrite.
+     * Called when the app comes back online.
+     * @returns {Promise<void>}
+     */
+    flushOfflineQueue: async () => {
+        if (!CloudSync.isLive) return;
+        try {
+            const queue = JSON.parse(localStorage.getItem('regenx-offline-queue') || '[]');
+            if (queue.length === 0) return;
+            console.log(`[CloudSync] Flushing ${queue.length} offline queued writes...`);
+            const failed = [];
+            for (const item of queue) {
+                try {
+                    if (item.key.startsWith('ord:') && item.data?.id) {
+                        await CloudSync.pushDocument(CloudSync.config.ordersCollectionId, item.data);
+                    } else if (item.key.startsWith('acc:') && item.data?.id) {
+                        await CloudSync.pushAccount(item.data);
+                    }
+                } catch (e) {
+                    failed.push(item);
+                }
+            }
+            localStorage.setItem('regenx-offline-queue', JSON.stringify(failed));
+            if (failed.length === 0) {
+                window.showToast?.('✅ All offline data synced to cloud!');
+            } else {
+                console.warn(`[CloudSync] ${failed.length} writes still pending after flush.`);
+            }
+        } catch (e) {
+            console.error('[CloudSync] flushOfflineQueue failed:', e);
+        }
+    },
+
+    /**
+     * Hydrates localStorage from Appwrite on login.
+     * Cloud data wins for account fields (tokens, staked).
+     * Cloud data wins for orders where cloud timestamp is newer.
+     * @param {string} uid - The logged-in user's ID.
+     * @returns {Promise<void>}
+     */
+    hydrateFromCloud: async (uid) => {
+        if (!CloudSync.isLive) return;
+        CloudSync.renderSyncBadge('syncing', 'Hydrating...');
+        try {
+            const [cloudAccount, cloudOrders] = await Promise.all([
+                CloudSync.fetchAccount(uid),
+                CloudSync.fetchOrdersForUser(uid)
+            ]);
+
+            // Hydrate account — cloud wins on financial fields
+            if (cloudAccount) {
+                const localRaw = localStorage.getItem(STORAGE_KEY_PREFIX + 'acc:' + uid);
+                const localAcc = localRaw ? JSON.parse(localRaw) : {};
+                const merged = { ...localAcc, ...cloudAccount };
+                localStorage.setItem(STORAGE_KEY_PREFIX + 'acc:' + uid, JSON.stringify(merged));
+                if (window.SESSION?.id === uid) {
+                    Object.assign(window.SESSION, merged);
+                    // Refresh token display if visible
+                    const tokenEl = document.getElementById('token-balance');
+                    if (tokenEl) tokenEl.textContent = merged.tokens ?? 0;
+                }
+            }
+
+            // Hydrate orders — cloud wins if timestamp is newer
+            for (const order of cloudOrders) {
+                const localKey = STORAGE_KEY_PREFIX + 'ord:' + order.id;
+                const localRaw = localStorage.getItem(localKey);
+                const localOrder = localRaw ? JSON.parse(localRaw) : null;
+                if (!localOrder || (order.ts > (localOrder.ts || 0))) {
+                    localStorage.setItem(localKey, JSON.stringify(order));
+                }
+            }
+
+            CloudSync.renderSyncBadge('live', 'Cloud Live');
+            console.log(`☁️ Hydrated from cloud: account + ${cloudOrders.length} orders`);
+
+            // Refresh the current dashboard view with fresh data
+            window.refreshCurrentView?.(true);
+        } catch (e) {
+            console.error('[CloudSync] hydrateFromCloud failed:', e);
+            CloudSync.renderSyncBadge('error', 'Sync Error');
+        }
+    },
     pushDocument: async (collection, document) => {
         if (!CloudSync.isLive || !CloudSync.databases || !CloudSync.config) return;
         
