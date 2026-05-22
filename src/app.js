@@ -10,15 +10,15 @@ import { ReGenXRealtime } from './realtime-sync.js';
 import { CloudSync } from './cloud-sync.js';
 
 const STORAGE_KEY_PREFIX = "regenx-v3:";
-const TRUST_LEDGER_KEY = "trust-ledger";
-const ESG_ALERTS_KEY = "esg-alerts";
-const CREDIT_LEDGER_KEY = "credit-ledger";
-const SLA_LEDGER_KEY = "sla-ledger";
-const ENERGY_LEDGER_KEY = "energy-ledger";
-const SENSOR_LEDGER_KEY = "sensor-ledger";
-const EMISSIONS_LEDGER_KEY = "emissions-ledger";
-const QUALITY_LEDGER_KEY = "quality-ledger";
-const AUTOMATION_PIPELINE_KEY = "automation-pipeline";
+const TRUST_LEDGER_KEY = STORAGE_KEY_PREFIX + "trust-ledger";
+const ESG_ALERTS_KEY = STORAGE_KEY_PREFIX + "esg-alerts";
+const CREDIT_LEDGER_KEY = STORAGE_KEY_PREFIX + "credit-ledger";
+const SLA_LEDGER_KEY = STORAGE_KEY_PREFIX + "sla-ledger";
+const ENERGY_LEDGER_KEY = STORAGE_KEY_PREFIX + "energy-ledger";
+const SENSOR_LEDGER_KEY = STORAGE_KEY_PREFIX + "sensor-ledger";
+const EMISSIONS_LEDGER_KEY = STORAGE_KEY_PREFIX + "emissions-ledger";
+const QUALITY_LEDGER_KEY = STORAGE_KEY_PREFIX + "quality-ledger";
+const AUTOMATION_PIPELINE_KEY = STORAGE_KEY_PREFIX + "automation-pipeline";
 
 // ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
@@ -1186,8 +1186,9 @@ window.resetAppData = function() {
   }
   keysToRemove.forEach(k => window.localStorage.removeItem(k));
   ReGenXRealtime?.clearOperationalState(keysToRemove);
-  // Also clear theme preference
+  // Also clear theme preferences (both keys for safety)
   window.localStorage.removeItem('regenx-theme');
+  window.localStorage.removeItem('theme');
   // Reload fresh
   window.location.reload();
 }
@@ -1212,13 +1213,27 @@ let autoRefreshTimer = null;
 
 // ── THEME ──
 window.toggleTheme = function() {
-  const current = document.documentElement.getAttribute('data-theme');
+  const current = document.documentElement.getAttribute('data-theme') || (document.documentElement.classList.contains('dark') ? 'dark' : 'light');
   const next = current === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
+  if (next === 'dark') {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
   window.localStorage.setItem('regenx-theme', next);
+  const navToggleBtn = document.getElementById('navbar-theme-toggle');
+  if (navToggleBtn) {
+    navToggleBtn.innerText = next === 'dark' ? '☀️' : '🌙';
+  }
 }
-const savedTheme = window.localStorage.getItem('regenx-theme') || 'light';
+const savedTheme = window.localStorage.getItem('regenx-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.setAttribute('data-theme', savedTheme);
+if (savedTheme === 'dark') {
+  document.documentElement.classList.add('dark');
+} else {
+  document.documentElement.classList.remove('dark');
+}
 
 // ══════════════════════════════════════
 // GOOGLE AUTH
@@ -4433,28 +4448,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const navToggleBtn = document.getElementById('navbar-theme-toggle');
     const rootHtml = document.documentElement;
 
-    const savedTheme = localStorage.getItem('theme');
+    const savedTheme = localStorage.getItem('regenx-theme');
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = savedTheme === 'dark' || (!savedTheme && prefersDark);
 
-    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+    if (isDark) {
         rootHtml.classList.add('dark');
+        rootHtml.setAttribute('data-theme', 'dark');
         if (navToggleBtn) navToggleBtn.innerText = '☀️';
     } else {
         rootHtml.classList.remove('dark');
+        rootHtml.setAttribute('data-theme', 'light');
         if (navToggleBtn) navToggleBtn.innerText = '🌙';
     }
 
     if (navToggleBtn) {
         navToggleBtn.addEventListener('click', () => {
-            if (rootHtml.classList.contains('dark')) {
-                rootHtml.classList.remove('dark');
-                localStorage.setItem('theme', 'light');
-                navToggleBtn.innerText = '🌙';
-            } else {
-                rootHtml.classList.add('dark');
-                localStorage.setItem('theme', 'dark');
-                navToggleBtn.innerText = '☀️';
-            }
+            window.toggleTheme();
         });
     }
 });
