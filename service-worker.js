@@ -33,6 +33,27 @@ const STATIC_ASSETS = [
 const STATIC_ASSET_PATHS = new Set(STATIC_ASSETS.map((asset) => new URL(asset, self.location.origin).pathname));
 
 /**
+ * Resolves notification targets through the browser URL parser and keeps only
+ * same-origin destinations.
+ *
+ * @param {string} url - Notification-provided destination.
+ * @returns {string} Safe in-origin URL or the offline fallback.
+ */
+function getSafeNotificationUrl(url) {
+  try {
+    const parsedUrl = new URL(String(url || '/'), self.location.origin);
+
+    if (parsedUrl.origin !== self.location.origin) {
+      return OFFLINE_URL;
+    }
+
+    return parsedUrl.href;
+  } catch (error) {
+    return OFFLINE_URL;
+  }
+}
+
+/**
  * Adds assets to cache one-by-one so a missing optional file does not break
  * the complete service worker installation.
  *
@@ -228,7 +249,7 @@ self.addEventListener('notificationclick', (event) => {
 
   if (event.action === 'dismiss') return;
 
-  const targetUrl = event.notification.data?.url || '/';
+  const targetUrl = getSafeNotificationUrl(event.notification.data?.url);
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
