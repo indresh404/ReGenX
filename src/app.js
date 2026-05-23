@@ -2228,11 +2228,16 @@ window.showView = function(viewId) {
 window.toggleSidebar = function(force) {
   const sb = document.getElementById('sidebar');
   const ov = document.getElementById('sidebar-overlay');
+  const toggleBtn = document.getElementById('sidebar-toggle');
   if(!sb || !ov) return;
   
   const isOpen = force !== undefined ? force : !sb.classList.contains('open');
   sb.classList.toggle('open', isOpen);
   ov.classList.toggle('open', isOpen);
+
+  sb.setAttribute('aria-hidden', String(!isOpen));
+  ov.setAttribute('aria-hidden', String(!isOpen));
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', String(isOpen));
 }
 
 // ── CORE DATA ENGINE ──

@@ -222,7 +222,8 @@ h1, h2, h3, .heading { font-family: 'Space Grotesk', sans-serif; font-weight: 70
 .sidebar-footer { padding: 16px; border-top: 1px solid var(--border); }
 
 .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 10px; color: var(--text-muted); font-weight: 500; text-decoration: none; transition: 0.2s; cursor: pointer; border: none; background: transparent; width: 100%; text-align: left; font-size: 15px; }
-.nav-item:hover { background: var(--surface-hover); color: var(--text); }
+.nav-item:hover, .nav-item:focus-visible { background: var(--surface-hover); color: var(--text); outline: none; }
+.nav-item:focus-visible { box-shadow: inset 0 0 0 2px var(--border-focus); }
 .nav-item.active { background: var(--green-light); color: var(--green); font-weight: 600; border-left: 4px solid var(--green); border-radius: 4px 10px 10px 4px; }
 .nav-badge { margin-left: auto; background: var(--red); color: white; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 700; }
 
@@ -1616,6 +1617,12 @@ tr:hover td { background: var(--bg); }
     z-index: 1999;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
+    border: none;
+    padding: 0;
+  }
+  .sidebar-overlay:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: -2px;
   }
 
   .sidebar-overlay.open {
@@ -1673,6 +1680,12 @@ tr:hover td { background: var(--bg); }
     align-items: center;
     justify-content: center;
     border-radius: 10px;
+    border: none;
+    background: rgba(255,255,255,0.08);
+  }
+  .hamburger:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 3px;
   }
 
   .two-col { grid-template-columns: 1fr; }
@@ -1858,6 +1871,14 @@ tr:hover td { background: var(--bg); }
   font-size: 24px;
   cursor: pointer;
   color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 8px;
+  line-height: 1;
+}
+.sidebar-close:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
 }
 
 @media (max-width: 768px) {
