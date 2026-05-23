@@ -179,34 +179,36 @@ async function replayQueuedOrders() {
 }
 
 self.addEventListener('push', (event) => {
-  let data = {
-    title: 'ReGenX Alert',
-    body: 'You have a new notification.'
-  };
+  event.waitUntil((async () => {
+    let data = {
+      title: 'ReGenX Alert',
+      body: 'You have a new notification.'
+    };
 
-  if (event.data) {
-    try {
-      data = event.data.json();
-    } catch (error) {
-      data.body = event.data.text();
+    if (event.data) {
+      try {
+        data = event.data.json();
+      } catch (error) {
+        data.body = await event.data.text();
+      }
     }
-  }
 
-  const options = {
-    body: data.body,
-    icon: '/icons/icon-192x192.png',
-    badge: '/icons/icon-72x72.png',
-    vibrate: [200, 100, 200],
-    data: {
-      url: data.url || '/'
-    },
-    actions: [
-      { action: 'view', title: 'View on Map' },
-      { action: 'dismiss', title: 'Dismiss' }
-    ]
-  };
+    const options = {
+      body: data.body,
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/icon-72x72.png',
+      vibrate: [200, 100, 200],
+      data: {
+        url: data.url || '/'
+      },
+      actions: [
+        { action: 'view', title: 'View on Map' },
+        { action: 'dismiss', title: 'Dismiss' }
+      ]
+    };
 
-  event.waitUntil(self.registration.showNotification(data.title, options));
+    return self.registration.showNotification(data.title, options);
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
