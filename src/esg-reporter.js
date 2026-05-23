@@ -6,17 +6,40 @@
 
 export const ESGReporter = {
     /**
-     * Generates a random SHA-256 style hash for audit registry entries.
-     * @returns {string} Hex-encoded hash with 0x prefix.
+     * Canonicalize a value for hashing so object key order cannot affect the digest.
+     * @param {*} value - Value to serialize.
+     * @returns {string} Stable string representation.
      */
-    generateAuditHash: () => {
-        if (window.crypto && window.crypto.getRandomValues) {
-            const bytes = new Uint8Array(32);
-            window.crypto.getRandomValues(bytes);
-            return '0x' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    canonicalizeHashPayload: (value) => {
+        if (value === null) return 'null';
+        if (value === undefined) return 'undefined';
+        if (Array.isArray(value)) return `[${value.map(ESGReporter.canonicalizeHashPayload).join(',')}]`;
+        if (typeof value === 'object') {
+            return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${ESGReporter.canonicalizeHashPayload(value[key])}`).join(',')}}`;
         }
-        return '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+        return JSON.stringify(value);
     },
+
+    /**
+     * Computes a SHA-256 hash for audit registry entries.
+     * @param {Object} payload - Report payload to hash.
+     * @returns {Promise<string>} Hex-encoded hash with 0x prefix.
+     */
+    computeSecureHash: async (payload) => {
+        if (!window.crypto?.subtle) {
+            throw new Error('Web Crypto API is unavailable in this browser context.');
+        }
+        const encoded = new TextEncoder().encode(ESGReporter.canonicalizeHashPayload(payload));
+        const digest = await window.crypto.subtle.digest('SHA-256', encoded);
+        return '0x' + Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+    },
+
+    /**
+     * Backward-compatible alias for existing report generation call sites.
+     * @param {Object} payload - Report payload to hash.
+     * @returns {Promise<string>} Hex-encoded hash with 0x prefix.
+     */
+    generateAuditHash: async (payload) => ESGReporter.computeSecureHash(payload),
 
     /**
      * Loads the public audit registry from localStorage.
@@ -322,7 +345,7 @@ export const ESGReporter = {
      * @param {Object} account - Current user SESSION object.
      * @param {Array} history - Array of completed order objects.
      */
-    generateReport: (account, history) => {
+    generateReport: async (account, history) => {
         if (!window.html2pdf) {
             alert("Report Engine is loading. Please try again in a moment.");
             return;
@@ -344,20 +367,34 @@ export const ESGReporter = {
         // Mock a cryptographic hash for "verifiability"
         const reportHash = ESGReporter.generateAuditHash();
         const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        const timestamp = Date.now();
+        const reportPayload = {
+            org: account.org || account.name,
+            role: account.role,
+            userId: account.id,
+            totalKg,
+            totalCO2,
+            tokens: totalTokens,
+            dispatchesCount: history.length,
+            timestamp
+        };
+
+        let reportHash;
+        try {
+            reportHash = await ESGReporter.generateAuditHash(reportPayload);
+        } catch (e) {
+            console.error('Failed to generate audit hash:', e);
+            if (window.showToast) window.showToast('⚠️ Failed to generate ESG verification hash.');
+            return;
+        }
+        const dateStr = new Date(timestamp).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
         // Save generated verification record to ReGenX Public Audit registry
         try {
             const registry = ESGReporter.loadAuditRegistry();
             registry.push({
-                hash: reportHash,
-                org: account.org || account.name,
-                role: account.role,
-                userId: account.id,
-                totalKg,
-                totalCO2,
-                tokens: totalTokens,
-                dispatchesCount: history.length,
-                timestamp: Date.now()
+                ...reportPayload,
+                hash: reportHash
             });
             ESGReporter.saveAuditRegistry(registry);
         } catch (e) {

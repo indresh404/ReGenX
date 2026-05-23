@@ -35,6 +35,7 @@ export const YieldOptimizer = {
 
         // Optimize Temperature based on Quality
         // Hard to digest (low score) -> needs slightly higher temp (thermophilic shift)
+        // Start with a standard mesophilic temperature
         let optimalTemp = 37.5;
         let recommendation = 'Maintain stable mesophilic conditions (37.5°C).';
         let healthStatus = 'Optimal';
