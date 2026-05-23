@@ -2148,6 +2148,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-emissions')" id="nav-v-emissions"><span class="nav-item-icon">🌫️</span> Emissions Tracker</button>
       <button class="nav-item" onclick="showView('v-quality')" id="nav-v-quality"><span class="nav-item-icon">🧪</span> Quality Index</button>
       <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
+      <button class="nav-item" onclick="showView('v-scan-history')" id="nav-v-scan-history"><span class="nav-item-icon">🔬</span> Scan History</button>
       <button class="nav-item" onclick="showView('v-esg-hub')" id="nav-v-esg-hub"><span class="nav-item-icon">🌱</span> Sustainability Hub</button>
       <button class="nav-item" onclick="showView('v-market')" id="nav-v-market"><span class="nav-item-icon">🛒</span> ReGen Exchange</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
@@ -2461,6 +2462,39 @@ function buildOrderCard(o, role) {
 // ── REFRESH CONTROLLER ──
 async function refreshCurrentView(fullRender = false) {
   const mc = document.getElementById('main-content');
+  if (currentView === 'v-scan-history') {
+    const scanHistory = JSON.parse(localStorage.getItem('regenx_scan_history') || '[]');
+    mc.innerHTML = `
+      <div class="between" style="margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+        <div>
+          <h3 class="heading">BioScan History</h3>
+          <div style="font-size:13px; color:var(--text-muted);">${scanHistory.length} scan${scanHistory.length !== 1 ? 's' : ''} recorded</div>
+        </div>
+        <button class="btn btn-primary" onclick="exportScanHistory()">⬇️ Export CSV</button>
+      </div>
+      ${scanHistory.length ? scanHistory.map(s => `
+        <div class="glass-card" style="margin-bottom:12px; padding:16px;">
+          <div class="between">
+            <div>
+              <div style="font-weight:700;">${s.wasteCategory}</div>
+              <div style="font-size:12px; color:var(--text-muted);">${new Date(s.timestamp).toLocaleString('en-IN')}</div>
+            </div>
+            <span class="badge ${s.contaminationLevel === 'Low' ? 'badge-green' : s.contaminationLevel === 'Medium' ? 'badge-amber' : 'badge-red'}">
+              ${s.contaminationLevel} Contamination
+            </span>
+          </div>
+          <div style="margin-top:8px; font-size:13px;">Organic: <strong>${s.organicPercentage}%</strong> · Role: ${s.role}</div>
+        </div>
+      `).join('') : renderDashboardListState({
+        icon: '🔬',
+        title: 'No scans yet',
+        description: 'Run the BioScan AI to see history here.',
+        statusLabel: 'Idle',
+        tone: 'inactive'
+      })}
+    `;
+    return;
+  }
   if (currentView === 'v-esg-hub') {
     const history = getAllOrders().filter(o => {
       if (SESSION.role === 'provider') return o.providerId === SESSION.id && o.status === 'completed';
@@ -3386,7 +3420,18 @@ window.openScanner = function() {
       }, 200);
     },
     onScanSaved: (record) => {
-
+      const history = JSON.parse(localStorage.getItem('regenx_scan_history') || '[]');
+      history.unshift({
+        scanId: record.id,
+        timestamp: new Date(record.ts).toISOString(),
+        role: SESSION.role,
+        organicPercentage: record.result?.organicPercent || 0,
+        contaminationLevel: (record.result?.organicPercent || 0) >= 75 ? 'Low' : (record.result?.organicPercent || 0) >= 50 ? 'Medium' : 'High',
+        wasteCategory: record.result?.wasteCategory || 'Unknown',
+        linkedDispatchId: null
+      });
+      if (history.length > 50) history.pop();
+      localStorage.setItem('regenx_scan_history', JSON.stringify(history));
     }
   });
   document.getElementById('modal').classList.add('open');
@@ -5131,6 +5176,19 @@ function detectDeviceClass() {
 
 detectDeviceClass();
 window.detectDeviceClass = detectDeviceClass;
+window.exportScanHistory = function() {
+  const history = JSON.parse(localStorage.getItem('regenx_scan_history') || '[]');
+  if (!history.length) return showToast('No scan history to export.');
+  const csv = ['scanId,timestamp,role,organicPercentage,contaminationLevel,wasteCategory,linkedDispatchId',
+    ...history.map(s => `${s.scanId},${s.timestamp},${s.role},${s.organicPercentage},${s.contaminationLevel},${s.wasteCategory},${s.linkedDispatchId || ''}`)
+  ].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'regenx_scan_history.csv';
+  a.click();
+  showToast('✓ CSV exported!');
+};
 // --- Copy to Clipboard Feature (Issue #78) ---
 
 function copyTagToClipboard(tag) {
