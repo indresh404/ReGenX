@@ -39,7 +39,7 @@ if ('serviceWorker' in navigator) {
         }
       });
     })
-    .catch(err => console.log('SW Registration Failed', err));
+    .catch(err => console.error('SW Registration Failed', err));
 }
 
 // ── Push Notification Permission UI ──
