@@ -18,6 +18,48 @@ const SENSOR_LEDGER_KEY = STORAGE_KEY_PREFIX + "sensor-ledger";
 const EMISSIONS_LEDGER_KEY = STORAGE_KEY_PREFIX + "emissions-ledger";
 const QUALITY_LEDGER_KEY = STORAGE_KEY_PREFIX + "quality-ledger";
 const AUTOMATION_PIPELINE_KEY = STORAGE_KEY_PREFIX + "automation-pipeline";
+const SESSION_STATE_KEY = STORAGE_KEY_PREFIX + 'active-session';
+
+function saveActiveSession(accountId, viewId) {
+  try {
+    const payload = { accountId, lastView: viewId || '', timestamp: Date.now() };
+    window.localStorage.setItem(SESSION_STATE_KEY, JSON.stringify(payload));
+  } catch { /* ignore storage failures */ }
+}
+
+function clearPersistedSession() {
+  try { window.localStorage.removeItem(SESSION_STATE_KEY); } catch { }
+}
+
+function loadPersistedSession() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.accountId) return null;
+    return parsed;
+  } catch {
+    clearPersistedSession();
+    return null;
+  }
+}
+
+function getDefaultViewForRole(role) {
+  if (role === 'provider') return 'v-pv-dash';
+  if (role === 'rider') return 'v-rd-dash';
+  if (role === 'plant') return 'v-pl-dash';
+  return '';
+}
+
+function isViewValidForRole(viewId, role) {
+  if (!viewId || !role) return false;
+  const validViews = {
+    provider: ['v-pv-dash','v-pv-req','v-iot-bins','v-pv-hist-week','v-pv-hist-month','v-compliance','v-reconciliation','v-sla','v-energy','v-sensor','v-emissions','v-quality','v-automation','v-market','v-audit-portal'],
+    rider: ['v-rd-dash','v-rd-jobs','v-rd-hist','v-compliance','v-reconciliation','v-sla','v-energy','v-sensor','v-emissions','v-quality','v-automation','v-audit-portal'],
+    plant: ['v-pl-dash','v-pl-in','v-pl-out','v-compliance','v-reconciliation','v-sla','v-energy','v-sensor','v-emissions','v-quality','v-automation','v-audit-portal']
+  };
+  return validViews[role]?.includes(viewId);
+}
 
 // ── PWA Service Worker v3 Registration ──
 if ('serviceWorker' in navigator) {
@@ -1717,11 +1759,23 @@ function handleGoogleLogin(response) {
 
 // AUTO LOGIN CHECK
 window.addEventListener("DOMContentLoaded", () => {
+  const persisted = loadPersistedSession();
+  if (persisted) {
+    const existing = DB.get('acc:' + persisted.accountId);
+    if (existing) {
+      currentView = persisted.lastView || getDefaultViewForRole(existing.role);
+      window.currentView = currentView;
+      executeLogin(existing);
+      if (currentView && isViewValidForRole(currentView, existing.role)) {
+        showView(currentView);
+      }
+    } else {
+      clearPersistedSession();
+    }
+  }
 
   setTimeout(() => {
-
     initGoogleAuth();
-
   }, 500);
 });
 
@@ -1964,6 +2018,7 @@ function executeLogin(acc) {
   window.SESSION = SESSION;
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-shell').classList.add('active');
+  saveActiveSession(SESSION.id, currentView);
 
   // Hydrate localStorage from Appwrite cloud on every login.
   // This ensures data persists across device changes and browser wipes.
@@ -2024,6 +2079,7 @@ window.doLogout = function() {
   if (pvChartInstance) { pvChartInstance.destroy(); pvChartInstance = null; }
   if (plChartInstance) { plChartInstance.destroy(); plChartInstance = null; }
   if (rMap) { rMap.remove(); rMap = null; }
+  clearPersistedSession();
   SESSION = { role: null, name: '', org: '', uid: '', lat: null, lng: null };
   window.SESSION = SESSION;
   window.currentView = '';
@@ -2038,7 +2094,7 @@ function buildSidebar() {
   const nav = document.getElementById('sidebar-nav');
   if (SESSION.role === 'provider') {
     nav.innerHTML = `
-      <button class="nav-item active" onclick="showView('v-pv-dash')" id="nav-v-pv-dash"><span class="nav-item-icon">📊</span> Overview</button>
+      <button class="nav-item" onclick="showView('v-pv-dash')" id="nav-v-pv-dash"><span class="nav-item-icon">📊</span> Overview</button>
       <button class="nav-item" onclick="showView('v-pv-req')" id="nav-v-pv-req"><span class="nav-item-icon">➕</span> Dispatch Request</button>
       <button class="nav-item" onclick="showView('v-iot-bins')" id="nav-v-iot-bins"><span class="nav-item-icon">🗑️</span> IoT Sensory Bins <span class="nav-badge" id="iot-alert-badge" style="display:none">!</span></button>
       <button class="nav-item" onclick="showView('v-pv-hist-week')" id="nav-v-pv-hist-week"><span class="nav-item-icon">📅</span> Weekly Records</button>
@@ -2054,7 +2110,9 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-market')" id="nav-v-market"><span class="nav-item-icon">🛒</span> ReGen Exchange</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
-    showView('v-pv-dash');
+    if (!currentView || !isViewValidForRole(currentView, SESSION.role)) {
+      showView('v-pv-dash');
+    }
   }
   if (SESSION.role === 'rider') {
     nav.innerHTML = `
@@ -2071,7 +2129,9 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
-    showView('v-rd-dash');
+    if (!currentView || !isViewValidForRole(currentView, SESSION.role)) {
+      showView('v-rd-dash');
+    }
   }
   if (SESSION.role === 'plant') {
     nav.innerHTML = `
@@ -2088,13 +2148,16 @@ function buildSidebar() {
       <button class="nav-item" onclick="showView('v-automation')" id="nav-v-automation"><span class="nav-item-icon">⚙️</span> Automation Pipeline</button>
       <button class="nav-item" onclick="showView('v-audit-portal')" id="nav-v-audit-portal"><span class="nav-item-icon">🔒</span> Public Verification</button>
     `;
-    showView('v-pl-dash');
+    if (!currentView || !isViewValidForRole(currentView, SESSION.role)) {
+      showView('v-pl-dash');
+    }
   }
 }
 
 window.showView = function(viewId) {
   currentView = viewId;
   window.currentView = currentView;
+  saveActiveSession(SESSION?.id, currentView);
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const btn = document.getElementById('nav-' + viewId);
   if(btn) btn.classList.add('active');
