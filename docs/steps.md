@@ -69,3 +69,8 @@
 - Step name: Research repeated Appwrite authorization failure
 - Action: Reviewed Appwrite API key and Sites REST documentation for required deployment scopes and compared five remediation paths.
 - Result: Selected a least-privilege path requiring a corrected Appwrite API key with `sites.read` and `sites.write`; documented the decision in `docs/solutions/appwrite-sites-unauthorized.md`.
+
+## 2026-05-23T12:45:57.6673649+05:30 - Commit and push Appwrite blocker documentation
+- Step name: Commit and push Appwrite blocker documentation
+- Action: Ran `git add -A`, confirmed staged files with `git status --short --branch`, committed `docs: record appwrite deployment blockers`, and pushed `main` to `origin`.
+- Result: Commit `2928106` was pushed successfully to `https://github.com/Shruti070107/ReGenX.git`.
