@@ -4947,6 +4947,8 @@ function renderIoT(mc, fullRender) {
         statusLabel: 'Idle',
         tone: 'inactive'
       })}
+    </div>
+
 
     <!-- Network telemetry footer -->
     <div class="glass-card sensor-card" style="margin-top:28px; padding:20px;">
