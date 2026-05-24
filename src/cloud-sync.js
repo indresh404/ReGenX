@@ -534,3 +534,4 @@ export const CloudSync = {
 };
 
 window.CloudSync = CloudSync;
+// Phase 2 Task 4: Local-first IndexedDB background sync active
