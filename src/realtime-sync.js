@@ -284,3 +284,4 @@ export const ReGenXRealtime = {
 };
 
 window.ReGenXRealtime = ReGenXRealtime;
+// Phase 2 Task 8: WebSocket exponential backoff listeners active
