@@ -105,7 +105,7 @@ window.requestPushPermission = async function() {
 
 /**
  * @function getAlertPreference
- * @description Reads the persisted smart alert preference for the current user.
+ * @description Reads the persisted smart alert preference for the current user.  
  * @returns {boolean} True if alerts are enabled.
  */
 function getAlertPreference() {
@@ -1710,8 +1710,7 @@ window.initGoogleAuth = function () {
 
   google.accounts.id.initialize({
 
-    client_id:
-      "661991506161-rb6j5n5klovjupfal1ip2qstcu0k366a.apps.googleusercontent.com",
+    client_id: window.__APP_CONFIG__?.googleClientId || import.meta.env?.VITE_GOOGLE_CLIENT_ID,
 
     callback:
       handleGoogleLogin
@@ -5187,3 +5186,6 @@ document.addEventListener('DOMContentLoaded', () => {
         window.AccessibilityManager.init();
     }
 });
+
+window.CloudSync = CloudSync;
+console.log("CloudSync module loaded");

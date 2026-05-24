@@ -379,8 +379,6 @@ export const ESGReporter = {
             : 0;
         
         // Mock a cryptographic hash for "verifiability"
-        const reportHash = ESGReporter.generateAuditHash();
-        const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
         const timestamp = Date.now();
         const reportPayload = {
             org: account.org || account.name,

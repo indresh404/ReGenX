@@ -529,7 +529,7 @@ export const AuditPortal = {
                                     <p style="font-size: 12px; color: ${step.icon === '⚠️' ? '#EF4444' : 'var(--text-muted)'}; line-height: 1.4; margin: 0;">${step.desc}</p>
                                 </div>
                             </div>
-                            </div>
+                            `).join('')}
                         </div>
 
                     </div>
