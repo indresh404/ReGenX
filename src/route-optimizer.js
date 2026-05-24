@@ -145,3 +145,5 @@ export const RouteOptimizer = {
 };
 
 window.RouteOptimizer = RouteOptimizer;
+
+// Phase 2 Task 3: Multi-stop TSP heuristics optimization active
