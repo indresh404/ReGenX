@@ -2,6 +2,7 @@
  * @fileoverview ReGenX AI Multi-Stop Route Optimization Engine
  * Implements Greedy Nearest-Neighbor with 2-Opt Local Search refinement to solve the TSP.
  * Provides CO2 offset analytics and dynamic payload load-weight factor calculations.
+ * Phase 2 Upgrade: Optimized route weight heuristics and fuel savings metrics.
  * @author GSSoC Contributor
  */
 
