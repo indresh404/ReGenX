@@ -305,8 +305,9 @@ window.startI18nObserver = function() {
 
 // LANGUAGE CONTROLLER
 window.setLanguage = function(lang) {
-  window.currentLanguage = lang;
-  localStorage.setItem('regenx-lang', lang);
+  const safeLang = (lang || 'en').toLowerCase();
+  window.currentLanguage = safeLang;
+  localStorage.setItem('regenx-lang', safeLang);
   
   // Instant dynamic translation
   if (lang !== 'en') {
