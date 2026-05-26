@@ -215,7 +215,8 @@ window.translateText = function(text, lang) {
 
 /**
  * Traverses the DOM recursively to translate all visible labels and text nodes.
- * @param {Node} root - The root node to start traversal.
+ * @param {Node} [root=document.body] - The root node to start traversal.
+ * @returns {void}
  */
 window.translateDOM = function(root = document.body) {
   const lang = window.currentLanguage || 'en';
