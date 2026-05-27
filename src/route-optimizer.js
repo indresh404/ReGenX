@@ -120,6 +120,9 @@ export const RouteOptimizer = {
 
     /**
      * Calculates total distance of a given tour sequence.
+     * @param {number[]} tour - Ordered array of node indices.
+     * @param {number[][]} matrix - Precomputed distance matrix.
+     * @returns {number} Total accumulated distance for the tour.
      */
     getTourDistance: (tour, matrix) => {
         let dist = 0;
