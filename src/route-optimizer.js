@@ -130,7 +130,12 @@ export const RouteOptimizer = {
     },
 
     /**
-     * Standard Haversine distance calculator.
+     * Standard Haversine distance calculator between two geographic coordinates.
+     * @param {number} lat1 - Latitude of the first point in degrees.
+     * @param {number} lon1 - Longitude of the first point in degrees.
+     * @param {number} lat2 - Latitude of the second point in degrees.
+     * @param {number} lon2 - Longitude of the second point in degrees.
+     * @returns {number} Great-circle distance in kilometres.
      */
     calculateDistance: (lat1, lon1, lat2, lon2) => {
         const R = 6371; // Earth radius in km
