@@ -174,8 +174,8 @@ export const TrustProtocol = {
 
     /**
      * Determines the rank name and visual properties based on score.
-     * @param {number} score - The user's current trust score 
-     * @returns {Object}
+     * @param {number} score - The user's current trust score.
+     * @returns {Object} Rank details including name, color, multiplier, and icon.
      */
     getRankDetails: (score) => {
         if (score >= 90) return { name: TrustProtocol.RANKS.DIAMOND, color: '#3B82F6', multiplier: 1.5, icon: '💎' };
