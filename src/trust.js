@@ -148,7 +148,7 @@ export const TrustProtocol = {
      * Calculates the trust score based on user activity.
      * @param {Object} account - The user account object.
      * @param {Array} history - The user's order history.
-     * @returns {number} Score from 0 to 100.
+     * @returns {number} Computed trust score clamped to the range [0, 100].
      */
     calculateScore: (account, history) => {
         if (!history || history.length === 0) return 50; // Base score for new users
