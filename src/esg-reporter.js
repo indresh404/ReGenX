@@ -334,7 +334,8 @@ export const ESGReporter = {
 
     /**
      * Helper to return the currently tracked history for PDF export.
-     * @returns {Array<Object>} Currently loaded history array.
+     * Falls back to an empty array when no history has been rendered yet.
+     * @returns {Array<Object>} Currently loaded history array, or `[]` if none is set.
      */
     getCurrentHistory: () => {
         return ESGReporter._lastHistory || [];
