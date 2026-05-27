@@ -186,9 +186,9 @@ export const TrustProtocol = {
 
     /**
      * Gets the dynamic reward for a completed order based on trust.
-     * @param {number} baseAmount - The base reward amount 
-     * @param {number} score 
-     * @returns {number}
+     * @param {number} baseAmount - The base reward amount before trust multiplier.
+     * @param {number} score - The user's current trust score (0–100).
+     * @returns {number} Final reward amount scaled by trust rank multiplier.
      */
     calculateReward: (baseAmount, score) => {
         const { multiplier } = TrustProtocol.getRankDetails(score);
