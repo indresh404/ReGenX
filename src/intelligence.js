@@ -66,8 +66,8 @@ export const Intelligence = {
     },
 
     /**
-     * Generates a unique transaction hash for "blockchain" interactions.
-     * @returns {string}
+     * Generates a unique pseudo-random transaction hash for blockchain interactions.
+     * @returns {string} A 40-character hex string prefixed with '0x' (e.g. `0xabcd1234...`).
      */
     generateTxHash: () => {
         return '0x' + Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
