@@ -44,6 +44,54 @@ export const CloudSync = {
             ordersCollectionId: import.meta.env?.VITE_APPWRITE_COLLECTION_ID_ORDERS || '',
             accountsCollectionId: import.meta.env?.VITE_APPWRITE_COLLECTION_ID_ACCOUNTS || ''
         };
+        try {
+            const response = await fetch('/.env');
+            if (response.ok) {
+                const text = await response.text();
+                const lines = text.split(/\r?\n/);
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed.startsWith('#')) continue;
+                    
+                    const eqIndex = trimmed.indexOf('=');
+                    if (eqIndex === -1) continue;
+                    
+                    const key = trimmed.substring(0, eqIndex).trim();
+                    let val = trimmed.substring(eqIndex + 1).trim();
+                    
+                    // Strip quotes if present
+                    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                        val = val.substring(1, val.length - 1);
+                    }
+                    
+                    if (key === 'VITE_APPWRITE_ENDPOINT' || key === 'APPWRITE_ENDPOINT') {
+                        config.endpoint = val;
+                    } else if (key === 'VITE_APPWRITE_PROJECT_ID' || key === 'APPWRITE_PROJECT_ID') {
+                        config.projectId = val;
+                    } else if (key === 'VITE_APPWRITE_DATABASE_ID' || key === 'APPWRITE_DATABASE_ID') {
+                        config.databaseId = val;
+                   } else if (key === 'VITE_APPWRITE_COLLECTION_ID_ORDERS' || key === 'APPWRITE_COLLECTION_ID_ORDERS') {
+                        config.ordersCollectionId = val;
+                    } else if (key === 'VITE_APPWRITE_COLLECTION_ID_ACCOUNTS' || key === 'APPWRITE_COLLECTION_ID_ACCOUNTS') {
+                        config.accountsCollectionId = val;
+                    }
+                }
+            } else {
+                console.warn("[CloudSync] Standard configuration could not load /.env file, status:", response.status);
+            }
+        } catch (e) {
+            console.warn("Failed to fetch or parse .env file. Falling back to defaults.", e);
+        }
+
+        // Check window process for fallback
+        if (window.process && window.process.env) {
+            config.endpoint = window.process.env.VITE_APPWRITE_ENDPOINT || window.process.env.APPWRITE_ENDPOINT || config.endpoint;
+            config.projectId = window.process.env.VITE_APPWRITE_PROJECT_ID || window.process.env.APPWRITE_PROJECT_ID || config.projectId;
+            config.databaseId = window.process.env.VITE_APPWRITE_DATABASE_ID || window.process.env.APPWRITE_DATABASE_ID || config.databaseId;
+            config.ordersCollectionId = window.process.env.VITE_APPWRITE_COLLECTION_ID_ORDERS || window.process.env.APPWRITE_COLLECTION_ID_ORDERS || config.ordersCollectionId;
+        }
+
+        return config;
     },
 
     /**
@@ -163,7 +211,10 @@ export const CloudSync = {
     },
 
     /**
-     * Sanitize order
+     * Sanitizes an order object to match database attribute schemas.
+     * Ensures all values match correct types and fallbacks default to empty strings.
+     * @param {Object} doc - Raw order document.
+     * @returns {Object} Sanitized object mapped exactly to Appwrite attributes.
      */
     sanitizeDoc: (doc) => {
         const out = {};
@@ -259,7 +310,11 @@ export const CloudSync = {
     },
 
     /**
-     * Offline queue
+     * Queues a write for offline retry. Stored in localStorage under a dedicated key.
+     * Latest value for any given key wins (deduplication).
+     * @param {string} key - Data key (e.g. 'ord:abc123').
+     * @param {Object} data - Data payload.
+     * @returns {void}
      */
     queueOfflineWrite: (key, data) => {
         const queue = JSON.parse(localStorage.getItem('regenx-offline-queue') || '[]');

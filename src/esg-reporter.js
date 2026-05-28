@@ -58,7 +58,8 @@ export const ESGReporter = {
 
     /**
      * Persists the public audit registry in localStorage.
-     * @param {Array<Object>} records - Registry records.
+     * @param {Array<Object>} records - Registry records to store.
+     * @returns {void}
      */
     saveAuditRegistry: (records) => {
         try {
@@ -334,7 +335,8 @@ export const ESGReporter = {
 
     /**
      * Helper to return the currently tracked history for PDF export.
-     * @returns {Array<Object>} Currently loaded history array.
+     * Falls back to an empty array when no history has been rendered yet.
+     * @returns {Array<Object>} Currently loaded history array, or `[]` if none is set.
      */
     getCurrentHistory: () => {
         return ESGReporter._lastHistory || [];

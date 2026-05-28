@@ -148,7 +148,7 @@ export const TrustProtocol = {
      * Calculates the trust score based on user activity.
      * @param {Object} account - The user account object.
      * @param {Array} history - The user's order history.
-     * @returns {number} Score from 0 to 100.
+     * @returns {number} Computed trust score clamped to the range [0, 100].
      */
     calculateScore: (account, history) => {
         if (!history || history.length === 0) return 50; // Base score for new users
@@ -174,8 +174,8 @@ export const TrustProtocol = {
 
     /**
      * Determines the rank name and visual properties based on score.
-     * @param {number} score - The user's current trust score 
-     * @returns {Object}
+     * @param {number} score - The user's current trust score.
+     * @returns {Object} Rank details including name, color, multiplier, and icon.
      */
     getRankDetails: (score) => {
         if (score >= 90) return { name: TrustProtocol.RANKS.DIAMOND, color: '#3B82F6', multiplier: 1.5, icon: '💎' };
@@ -186,9 +186,9 @@ export const TrustProtocol = {
 
     /**
      * Gets the dynamic reward for a completed order based on trust.
-     * @param {number} baseAmount - The base reward amount 
-     * @param {number} score 
-     * @returns {number}
+     * @param {number} baseAmount - The base reward amount before trust multiplier.
+     * @param {number} score - The user's current trust score (0–100).
+     * @returns {number} Final reward amount scaled by trust rank multiplier.
      */
     calculateReward: (baseAmount, score) => {
         const { multiplier } = TrustProtocol.getRankDetails(score);
